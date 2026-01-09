@@ -43,7 +43,7 @@ bool g_ItemESP = false;
 bool g_3DESP = false;
 bool g_3DESPShowNonItems = false;
 float g_Transparency = 0.5f;
-float g_ESPDistance = 10.0f;
+float g_ESPDistance = 50.0f;
 
 // Object Data
 struct GameObject {
@@ -477,7 +477,7 @@ void Draw3DESP(IDirect3DDevice9 *device) {
 
     draw->AddCircleFilled(screen, 3.0f, color);
 
-    draw->AddText(ImVec2(screen.x - 6, screen.y - 6),
+    draw->AddText(ImVec2(screen.x + 6, screen.y - 6),
                   IM_COL32(255, 255, 255, 200), label);
   }
 }
@@ -535,6 +535,7 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
       ImGui::Checkbox("Wireframe", &g_Wireframe);
       ImGui::Checkbox("Fullbright", &g_Fullbright);
       ImGui::Checkbox("Item Radar", &g_ItemESP);
+      ImGui::Checkbox("Item ESP", &g_3DESP);
       if (g_3DESP) {
         ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f);
       }
