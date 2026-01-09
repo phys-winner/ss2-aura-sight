@@ -2,6 +2,8 @@
 
 **Aura-Sight (霊視 - Reishi)** is a specialized exploration tool for the original **System Shock 2 (1999)**. It provides advanced visualization and information gathering capabilities, perfect for game archaeology and deep exploration of the Von Braun.
 
+[**🚀 Download Latest Release (hook.dll)**](https://github.com/phys-winner/ss2-aura-sight/releases/latest)
+
 ## Features
 - **Item Radar**: 2D top-down view of all entities in the current level.
 - **3D ESP**: Labels and distance indicators for items and interactive objects.
