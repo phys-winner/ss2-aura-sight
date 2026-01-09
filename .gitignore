@@ -1,0 +1,21 @@
+# MSVC / Build artifacts
+*.obj
+*.dll
+*.pdb
+*.exp
+*.lib
+*.exe
+build/
+.vs/
+*.user
+
+# Project specific
+objectlist.txt
+*.log
+
+# VS Code
+.vscode/
+
+# Personal / Local scripts
+run_test.bat
+*.bat.user
