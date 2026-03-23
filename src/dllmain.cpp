@@ -528,37 +528,50 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
       ImGui::Text("INSERT to hide menu");
       ImGui::Separator();
 
+      ImGui::SeparatorText("GENERAL");
       ImGui::Checkbox("Block Game Input", &g_BlockInput);
+      ImGui::SetItemTooltip("Stop keyboard and mouse events from reaching the game.");
+
+      ImGui::SeparatorText("VISUALS");
       ImGui::Checkbox("Wallhack", &g_Wallhack);
-      if (g_Wallhack)
+      ImGui::SetItemTooltip("See through walls (Z-buffer disabled).");
+      if (g_Wallhack) {
         ImGui::SliderFloat("Transparency", &g_Transparency, 0.1f, 1.0f);
+        ImGui::SetItemTooltip("Adjust the opacity of world geometry.");
+      }
       ImGui::Checkbox("Wireframe", &g_Wireframe);
+      ImGui::SetItemTooltip("Render the world as a mesh grid.");
       ImGui::Checkbox("Fullbright", &g_Fullbright);
+      ImGui::SetItemTooltip("Disable lightmaps for consistent maximum brightness.");
+
+      ImGui::SeparatorText("RADAR & ESP");
       ImGui::Checkbox("Item Radar", &g_ItemESP);
+      ImGui::SetItemTooltip("Show nearby items on the 2D radar overlay.");
       ImGui::Checkbox("Item ESP", &g_3DESP);
+      ImGui::SetItemTooltip("Display item names and distances in 3D world space.");
       if (g_3DESP) {
         ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f);
+        ImGui::SetItemTooltip("Maximum distance to display 3D labels.");
       }
 
       if (g_ItemESP || g_3DESP) {
         ImGui::Checkbox("Show non-items", &g_3DESPShowNonItems);
+        ImGui::SetItemTooltip("Display all objects, not just lootable items.");
       }
 
-      ImGui::Separator();
-      ImGui::Text("Player Position:");
+      ImGui::SeparatorText("PLAYER STATUS");
       ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
                   g_Player.z);
 
-      ImGui::Text("Up-Down: %d", g_Player.playerUpDn);
-      ImGui::Text("Left-Right: %d", g_Player.playerLftRt);
+      ImGui::Text("Pitch: %d", g_Player.playerUpDn);
+      ImGui::Text("Yaw: %d", g_Player.playerLftRt);
 
-      ImGui::Separator();
-      ImGui::Text("Camera Position:");
+      ImGui::SeparatorText("CAMERA STATUS");
       ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.camX, g_Player.camY,
                   g_Player.camZ);
 
-      ImGui::Text("Up-Down: %d", g_Player.camUpDn);
-      ImGui::Text("Left-Right: %d", g_Player.camLftRt);
+      ImGui::Text("Pitch: %d", g_Player.camUpDn);
+      ImGui::Text("Yaw: %d", g_Player.camLftRt);
       ImGui::Text("Roll: %d", g_Player.camRoll);
 
       ImGui::End();
