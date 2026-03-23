@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <windows.h>
+#include <unordered_map>
+#include <string>
 
 struct Vec3 {
   float x, y, z;
@@ -45,10 +47,14 @@ bool g_3DESPShowNonItems = false;
 float g_Transparency = 0.5f;
 float g_ESPDistance = 50.0f;
 
+// Cache
+std::unordered_map<uintptr_t, std::string> g_NameCache;
+
 // Object Data
 struct GameObject {
   float x, y, z;
-  bool is_null;
+  uintptr_t ptr;
+  int id;
 };
 #define MAX_OBJECTS 8000
 GameObject g_Objects[MAX_OBJECTS];
@@ -258,22 +264,21 @@ void UpdateObjectList() {
           // scan entire list
           for (int i = 0; i < MAX_OBJECTS; i++) {
             uintptr_t itemPtr = items[i];
-            bool is_null = true;
             if (itemPtr && itemPtr > 0x10000) { // Basic validity check
               float x = *(float *)(itemPtr + 0);
               float y = *(float *)(itemPtr + 4);
               float z = *(float *)(itemPtr + 8);
               if (x != 0.0f || y != 0.0f || z != 0.0f) {
-                is_null = false;
                 g_Objects[g_ObjectCount].x = x;
                 g_Objects[g_ObjectCount].y = y;
                 g_Objects[g_ObjectCount].z = z;
+                g_Objects[g_ObjectCount].ptr = itemPtr;
+                g_Objects[g_ObjectCount].id = i;
+                g_ObjectCount++;
+                if (g_ObjectCount >= MAX_OBJECTS)
+                  break;
               }
             }
-            g_Objects[g_ObjectCount].is_null = is_null;
-            g_ObjectCount++;
-            if (g_ObjectCount >= MAX_OBJECTS)
-              break;
           }
         }
       }
@@ -299,7 +304,6 @@ void UpdatePlayerData() {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
   }
-  UpdateObjectList();
 
   uintptr_t *cameraPtrAddr = (uintptr_t *)(base + 0x1A6FF0);
   if (cameraPtrAddr && *cameraPtrAddr) {
@@ -385,15 +389,19 @@ void DrawRadar() {
   ImGui::End();
 }
 
-bool WorldToScreen(const Vec3 &world, ImVec2 &out) {
+bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
   // World delta
   float dx = world.x - g_Player.camX;
   float dy = world.y - g_Player.camY;
   float dz = world.z - g_Player.camZ;
 
-  float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-  if (dist > g_ESPDistance)
+  float distSq = dx * dx + dy * dy + dz * dz;
+  if (distSq > g_ESPDistance * g_ESPDistance)
     return false;
+
+  float dist = sqrtf(distSq);
+  if (outDist)
+    *outDist = dist;
 
   // Angles
   float yaw =
@@ -447,26 +455,29 @@ void Draw3DESP(IDirect3DDevice9 *device) {
   ImDrawList *draw = ImGui::GetForegroundDrawList();
 
   for (int i = 0; i < g_ObjectCount; i++) {
-
-    if (g_Objects[i].is_null) {
-      continue;
-    }
     Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
 
     ImVec2 screen;
-    if (!WorldToScreen(obj, screen))
+    float dist = 0.0f;
+    if (!WorldToScreen(obj, screen, &dist))
       continue;
 
-    float dx = obj.x - g_Player.camX;
-    float dy = obj.y - g_Player.camY;
-    float dz = obj.z - g_Player.camZ;
-    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
     char label[300];
-    char nameBuf[256];
-    bool result = GetStringProperty(i, "ObjShort", nameBuf, 256);
+    std::string name;
+    auto it = g_NameCache.find(g_Objects[i].ptr);
+    if (it != g_NameCache.end()) {
+      name = it->second;
+    } else {
+      char nameBuf[256];
+      if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
+          nameBuf[0] != '\0') {
+        name = nameBuf;
+        g_NameCache[g_Objects[i].ptr] = name;
+      }
+    }
 
-    if (result && nameBuf[0] != '\0') {
-      sprintf(label, "%s [%.0fm]", nameBuf, dist);
+    if (!name.empty()) {
+      sprintf(label, "%s [%.0fm]", name.c_str(), dist);
     } else if (g_3DESPShowNonItems) {
       sprintf(label, "%.0fm", dist);
     } else {
