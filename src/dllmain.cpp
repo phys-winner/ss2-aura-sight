@@ -130,6 +130,7 @@ bool GetStringProperty(int itemID, const char *propName, char *outBuffer,
     strncpy_s(outBuffer, outSize, tempStr.m_pchData, _TRUNCATE);
     success = true;
   }
+
   return success;
 }
 
@@ -466,9 +467,9 @@ void Draw3DESP(IDirect3DDevice9 *device) {
     bool result = GetStringProperty(i, "ObjShort", nameBuf, 256);
 
     if (result && nameBuf[0] != '\0') {
-      sprintf(label, "%s [%.0fm]", nameBuf, dist);
+      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", nameBuf, dist);
     } else if (g_3DESPShowNonItems) {
-      sprintf(label, "%.0fm", dist);
+      _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     } else {
       continue;
     }
