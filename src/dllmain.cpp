@@ -464,11 +464,21 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       continue;
 
     char label[300];
-    char nameBuf[256];
-    bool result = GetStringProperty(i, "ObjShort", nameBuf, 256);
+    std::string name;
+    auto it = g_NameCache.find(g_Objects[i].ptr);
+    if (it != g_NameCache.end()) {
+      name = it->second;
+    } else {
+      char nameBuf[256];
+      if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
+          nameBuf[0] != '\0') {
+        name = nameBuf;
+        g_NameCache[g_Objects[i].ptr] = name;
+      }
+    }
 
-    if (result && nameBuf[0] != '\0') {
-      sprintf(label, "%s [%.0fm]", nameBuf, dist);
+    if (!name.empty()) {
+      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", name.c_str(), dist);
     } else if (g_3DESPShowNonItems) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     } else {
