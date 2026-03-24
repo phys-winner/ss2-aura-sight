@@ -945,6 +945,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               float dist = sqrtf(dx * dx + dy * dy + dz * dz);
 
               ImGui::TableNextRow();
+              if (dist > g_ESPDistance) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       IM_COL32(80, 20, 20, 100));
+              }
+
               ImGui::TableSetColumnIndex(0);
               ImGui::Text("%s", name.empty() ? "(empty)" : name.c_str());
 
