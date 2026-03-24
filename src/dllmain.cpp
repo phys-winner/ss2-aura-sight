@@ -264,7 +264,22 @@ void UpdateObjectList() {
     return;
   }
 
-  // Only update the object list every 30 frames to save CPU
+  // Update info about already cached items every frame for smooth movement
+  if (g_ObjectCount > 0) {
+    __try {
+      for (int i = 0; i < g_ObjectCount; i++) {
+        uintptr_t itemPtr = g_Objects[i].ptr;
+        if (itemPtr && itemPtr > 0x10000) {
+          g_Objects[i].x = *(float *)(itemPtr + 0);
+          g_Objects[i].y = *(float *)(itemPtr + 4);
+          g_Objects[i].z = *(float *)(itemPtr + 8);
+        }
+      }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+  }
+
+  // Only perform the full 8000-slot array scan every 30 frames to save CPU
   if (frameCount % 30 != 0 && g_ObjectCount > 0)
     return;
 
