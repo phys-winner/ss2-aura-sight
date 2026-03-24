@@ -60,6 +60,14 @@ struct GameObject {
 GameObject g_Objects[MAX_OBJECTS];
 int g_ObjectCount = 0;
 
+struct ViewData {
+  float sinYaw, cosYaw;
+  float sinPitch, cosPitch;
+  float sinRoll, cosRoll;
+  float fovScale;
+};
+ViewData g_ViewData;
+
 // Player Data
 struct PlayerData {
   float x, y, z;
@@ -248,12 +256,21 @@ long __stdcall Hooked_SetTexture(IDirect3DDevice9 *device, DWORD Stage,
 }
 
 void UpdateObjectList() {
+  static unsigned int frameCount = 0;
+  frameCount++;
 
-  g_ObjectCount = 0;
-  if (!g_ItemESP && !g_3DESP)
+  if (!g_ItemESP && !g_3DESP) {
+    g_ObjectCount = 0;
+    return;
+  }
+
+  // Only update the object list every 30 frames to save CPU
+  if (frameCount % 30 != 0 && g_ObjectCount > 0)
     return;
 
-  uintptr_t base = (uintptr_t)GetModuleHandle(NULL);
+  g_ObjectCount = 0;
+
+  uintptr_t base = g_SS2Base;
   uintptr_t *ptr1 = (uintptr_t *)(base + 0x63AC94);
   __try {
     if (ptr1 && *ptr1) {
@@ -291,7 +308,8 @@ void UpdateObjectList() {
 void CleanUpHooks() {}
 
 void UpdatePlayerData() {
-  uintptr_t base = (uintptr_t)GetModuleHandle(NULL);
+  InitSS2Base();
+  uintptr_t base = g_SS2Base;
   UpdateObjectList();
   uintptr_t *playerPtrAddr = (uintptr_t *)(base + 0x3320);
   if (playerPtrAddr && *playerPtrAddr) {
@@ -319,6 +337,23 @@ void UpdatePlayerData() {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
   }
+
+  // Pre-calculate view constants
+  float yaw =
+      -(float)g_Player.camLftRt * (2.0f * 3.14159265f / 65536.0f) + 1.5707963f;
+  float pitch = (float)g_Player.camUpDn * (3.14159265f / 32768.0f);
+  float roll = (float)g_Player.camRoll * (3.14159265f / 32768.0f);
+
+  g_ViewData.sinYaw = sinf(yaw);
+  g_ViewData.cosYaw = cosf(yaw);
+  g_ViewData.sinPitch = sinf(pitch);
+  g_ViewData.cosPitch = cosf(pitch);
+  g_ViewData.sinRoll = sinf(roll);
+  g_ViewData.cosRoll = cosf(roll);
+
+  float cy = ImGui::GetIO().DisplaySize.y * 0.5f;
+  float fovRad = 73.74f * (3.14159265f / 180.0f);
+  g_ViewData.fovScale = cy / tanf(fovRad * 0.5f);
 }
 
 void DrawRadar() {
@@ -404,32 +439,19 @@ bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
   if (outDist)
     *outDist = dist;
 
-  // Angles
-  float yaw =
-      -(float)g_Player.camLftRt * (2.0f * 3.14159265f / 65536.0f) + 1.5707963f;
-  float pitch = (float)g_Player.camUpDn * (3.14159265f / 32768.0f);
-  float roll = (float)g_Player.camRoll * (3.14159265f / 32768.0f);
-
-  float sinYaw = sinf(yaw);
-  float cosYaw = cosf(yaw);
-  float sinPitch = sinf(pitch);
-  float cosPitch = cosf(pitch);
-  float sinRoll = sinf(roll); // 🌀
-  float cosRoll = cosf(roll); // 🌀
-
   // Rotate by yaw (Y axis)
-  float x1 = dx * cosYaw - dy * sinYaw;
-  float y1 = dx * sinYaw + dy * cosYaw;
+  float x1 = dx * g_ViewData.cosYaw - dy * g_ViewData.sinYaw;
+  float y1 = dx * g_ViewData.sinYaw + dy * g_ViewData.cosYaw;
   float z1 = dz;
 
   // Rotate by pitch (X axis)
   float x2 = x1;
-  float y2 = y1 * cosPitch - z1 * sinPitch;
-  float z2 = y1 * sinPitch + z1 * cosPitch;
+  float y2 = y1 * g_ViewData.cosPitch - z1 * g_ViewData.sinPitch;
+  float z2 = y1 * g_ViewData.sinPitch + z1 * g_ViewData.cosPitch;
 
   // Rotate by roll (Z axis / View Axis)
-  float x3 = x2 * cosRoll - z2 * sinRoll;
-  float z3 = x2 * sinRoll + z2 * cosRoll;
+  float x3 = x2 * g_ViewData.cosRoll - z2 * g_ViewData.sinRoll;
+  float z3 = x2 * g_ViewData.sinRoll + z2 * g_ViewData.cosRoll;
 
   // Behind camera
   if (y2 <= 0.1f)
@@ -439,12 +461,8 @@ bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
   float cx = io.DisplaySize.x * 0.5f;
   float cy = io.DisplaySize.y * 0.5f;
 
-  float gameFov = 73.74f;
-  float fovRad = gameFov * (3.14159265f / 180.0f);
-  float scale = cy / tanf(fovRad * 0.5f);
-
-  out.x = cx + (x3 / y2) * scale;
-  out.y = cy - (z3 / y2) * scale;
+  out.x = cx + (x3 / y2) * g_ViewData.fovScale;
+  out.y = cy - (z3 / y2) * g_ViewData.fovScale;
 
   return true;
 }
@@ -473,8 +491,10 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
           nameBuf[0] != '\0') {
         name = nameBuf;
-        g_NameCache[g_Objects[i].ptr] = name;
+      } else {
+        name = ""; // Mark as empty to avoid re-lookup
       }
+      g_NameCache[g_Objects[i].ptr] = name;
     }
 
     if (!name.empty()) {
