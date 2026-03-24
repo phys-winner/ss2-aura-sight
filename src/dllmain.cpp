@@ -486,11 +486,15 @@ void Draw3DESP(IDirect3DDevice9 *device) {
     }
 
     ImU32 color = IM_COL32(255, 255, 0, 220);
-
     draw->AddCircleFilled(screen, 3.0f, color);
 
-    draw->AddText(ImVec2(screen.x + 6, screen.y - 6),
-                  IM_COL32(255, 255, 255, 200), label);
+    ImVec2 textSize = ImGui::CalcTextSize(label);
+    ImVec2 textPos = ImVec2(screen.x + 6, screen.y - 6);
+    draw->AddRectFilled(ImVec2(textPos.x - 2, textPos.y - 1),
+                       ImVec2(textPos.x + textSize.x + 2, textPos.y + textSize.y + 1),
+                       IM_COL32(0, 0, 0, 120));
+
+    draw->AddText(textPos, IM_COL32(255, 255, 255, 200), label);
   }
 }
 
