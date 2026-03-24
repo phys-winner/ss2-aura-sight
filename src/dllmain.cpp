@@ -857,12 +857,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                                     ImGuiTableFlags_Resizable |
                                     ImGuiTableFlags_Sortable)) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort);
-            ImGui::TableSetupColumn("Cat", ImGuiTableColumnFlags_Sortable);
-            ImGui::TableSetupColumn(
-                "Dist", ImGuiTableColumnFlags_WidthFixed |
-                            ImGuiTableColumnFlags_Sortable,
-                40.0f);
-            ImGui::TableSetupColumn("Track", ImGuiTableColumnFlags_WidthFixed,
+            ImGui::TableSetupColumn("Cat");
+            ImGui::TableSetupColumn("Dist", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableSetupColumn("Track", ImGuiTableColumnFlags_WidthFixed |
+                                                 ImGuiTableColumnFlags_NoSort,
                                     40.0f);
             ImGui::TableHeadersRow();
 
