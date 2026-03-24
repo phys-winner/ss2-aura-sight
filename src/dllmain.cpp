@@ -9,6 +9,8 @@
 #include <windows.h>
 #include <unordered_map>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 struct Vec3 {
   float x, y, z;
@@ -37,6 +39,34 @@ bool g_Initialized = false;
 bool g_ShowMenu = true;
 bool g_BlockInput = true;
 
+enum EntityCategory {
+  CAT_UNKNOWN,
+  CAT_WEAPON,
+  CAT_AMMO,
+  CAT_CONSUMABLE,
+  CAT_RESOURCES,
+  CAT_MISC,
+  CAT_INTERACTIVE,
+  CAT_ENEMY,
+  CAT_COUNT
+};
+
+struct CategoryInfo {
+  const char *name;
+  ImU32 color;
+  bool enabled;
+};
+
+CategoryInfo g_Categories[CAT_COUNT] = {
+    {"Unknown", IM_COL32(200, 200, 200, 255), true},
+    {"Weapons", IM_COL32(255, 50, 50, 255), true},
+    {"Ammo", IM_COL32(255, 165, 0, 255), true},
+    {"Consumables", IM_COL32(50, 255, 50, 255), true},
+    {"Resources", IM_COL32(0, 255, 255, 255), true},
+    {"Misc Items", IM_COL32(255, 255, 0, 255), true},
+    {"Interactive", IM_COL32(200, 0, 255, 255), true},
+    {"Enemies", IM_COL32(255, 0, 0, 255), true}};
+
 // Hack Settings
 bool g_Wallhack = false;
 bool g_Wireframe = false;
@@ -46,9 +76,15 @@ bool g_3DESP = false;
 bool g_3DESPShowNonItems = false;
 float g_Transparency = 0.5f;
 float g_ESPDistance = 50.0f;
+char g_SearchFilter[64] = "";
+std::string g_SearchFilterLower = "";
 
 // Cache
-std::unordered_map<uintptr_t, std::string> g_NameCache;
+struct CachedEntity {
+  std::string name;
+  EntityCategory cat;
+};
+std::unordered_map<uintptr_t, CachedEntity> g_EntityCache;
 
 // Object Data
 struct GameObject {
@@ -101,6 +137,88 @@ constexpr uintptr_t ADDR_ROOT_PTR = 0x5FF87C;    // dword_9FF87C
 constexpr uintptr_t ADDR_IID_PROPMAN = 0x343050; // unk_743050 (GUID)
 
 uintptr_t g_SS2Base = 0;
+
+EntityCategory GetEntityCategory(const std::string &name) {
+  if (name.empty())
+    return CAT_UNKNOWN;
+
+  std::string lowerName = name;
+  std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                 ::tolower);
+
+  // Enemies
+  if (lowerName.find("hybrid") != std::string::npos ||
+      lowerName.find("monkey") != std::string::npos ||
+      lowerName.find("swinekeeper") != std::string::npos)
+    return CAT_ENEMY;
+
+  // Weapons
+  if (lowerName.find("pistol") != std::string::npos ||
+      lowerName.find("shotgun") != std::string::npos ||
+      lowerName.find("wrench") != std::string::npos ||
+      lowerName.find("launcher") != std::string::npos ||
+      lowerName.find("psi amp") != std::string::npos)
+    return CAT_WEAPON;
+
+  // Ammo
+  if (lowerName.find("bullets") != std::string::npos ||
+      lowerName.find("shells") != std::string::npos ||
+      lowerName.find("slugs") != std::string::npos)
+    return CAT_AMMO;
+
+  // Consumables
+  if (lowerName.find("hypo") != std::string::npos ||
+      lowerName.find("booster") != std::string::npos ||
+      lowerName.find("bottle") != std::string::npos ||
+      lowerName.find("can") != std::string::npos ||
+      lowerName.find("chips") != std::string::npos ||
+      lowerName.find("juice") != std::string::npos ||
+      lowerName.find("vodka") != std::string::npos ||
+      lowerName.find("liquor") != std::string::npos)
+    return CAT_CONSUMABLE;
+
+  // Resources / Important Items
+  if (lowerName.find("nanites") != std::string::npos ||
+      lowerName.find("cyber modules") != std::string::npos ||
+      lowerName.find("software") != std::string::npos ||
+      lowerName.find("implant") != std::string::npos ||
+      lowerName.find("log") != std::string::npos ||
+      lowerName.find("tool") != std::string::npos)
+    return CAT_RESOURCES;
+
+  // Periodic Table Elements (Resources)
+  static const std::vector<std::string> elements = {
+      "fermium", "gallium", "antimony", "yttrium", "californium",
+      "osmium",  "iridium", "tellurium", "technetium", "barium"};
+  for (const auto &el : elements) {
+    if (lowerName.find(el) != std::string::npos)
+      return CAT_RESOURCES;
+  }
+
+  // Interactive
+  if (lowerName.find("computer") != std::string::npos ||
+      lowerName.find("console") != std::string::npos ||
+      lowerName.find("crate") != std::string::npos ||
+      lowerName.find("replicator") != std::string::npos ||
+      lowerName.find("port") != std::string::npos ||
+      lowerName.find("keypad") != std::string::npos ||
+      lowerName.find("locker") != std::string::npos)
+    return CAT_INTERACTIVE;
+
+  // Misc
+  if (lowerName.find("desk") != std::string::npos ||
+      lowerName.find("mug") != std::string::npos ||
+      lowerName.find("plant") != std::string::npos ||
+      lowerName.find("gurney") != std::string::npos ||
+      lowerName.find("bag") != std::string::npos ||
+      lowerName.find("barrel") != std::string::npos ||
+      lowerName.find("basketball") != std::string::npos ||
+      lowerName.find("cigarettes") != std::string::npos ||
+      lowerName.find("player") != std::string::npos)
+    return CAT_MISC;
+
+  return CAT_UNKNOWN;
+}
 
 void InitSS2Base() {
   if (!g_SS2Base) {
@@ -411,6 +529,39 @@ void DrawRadar() {
   float scale = 2.0f;
 
   for (int i = 0; i < g_ObjectCount; i++) {
+    std::string name;
+    EntityCategory cat;
+
+    auto it = g_EntityCache.find(g_Objects[i].ptr);
+    if (it != g_EntityCache.end()) {
+      name = it->second.name;
+      cat = it->second.cat;
+    } else {
+      char nameBuf[256];
+      if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
+          nameBuf[0] != '\0') {
+        name = nameBuf;
+      } else {
+        name = "";
+      }
+      cat = GetEntityCategory(name);
+      g_EntityCache[g_Objects[i].ptr] = {name, cat};
+    }
+
+    if (!g_3DESPShowNonItems && name.empty())
+      continue;
+
+    if (!g_Categories[cat].enabled)
+      continue;
+
+    if (!g_SearchFilterLower.empty()) {
+      std::string lowerName = name;
+      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     ::tolower);
+      if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+        continue;
+    }
+
     float dx = g_Objects[i].x - g_Player.camX;
     float dy = g_Objects[i].y - g_Player.camY;
     float dz = fabsf(g_Objects[i].z - g_Player.camZ);
@@ -424,14 +575,13 @@ void DrawRadar() {
     float screenX = center.x - dy * scale;
     float screenY = center.y - dx * scale;
 
-    int alpha = (int)(150.0f * (1.0f - (dz / 5.0f)));
-    if (alpha < 30)
-      alpha = 30;
+    int alpha = (int)(255.0f * (1.0f - (dz / 5.0f)));
+    if (alpha < 50)
+      alpha = 50;
 
     if (screenX > pos.x && screenX < pos.x + size.x && screenY > pos.y &&
         screenY < pos.y + size.y) {
-      ImU32 color = IM_COL32(255, 255, 0, alpha);
-      // unsigned char cat = g_Objects[i].category;
+      ImU32 color = (g_Categories[cat].color & 0x00FFFFFF) | (alpha << 24);
       float radius = 2.0f;
       drawList->AddCircleFilled(ImVec2(screenX, screenY), radius, color);
     }
@@ -482,6 +632,7 @@ bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
   return true;
 }
 
+
 void Draw3DESP(IDirect3DDevice9 *device) {
   if (!g_3DESP || g_ObjectCount == 0)
     return;
@@ -491,36 +642,53 @@ void Draw3DESP(IDirect3DDevice9 *device) {
   for (int i = 0; i < g_ObjectCount; i++) {
     Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
 
-    ImVec2 screen;
-    float dist = 0.0f;
-    if (!WorldToScreen(obj, screen, &dist))
-      continue;
-
     char label[300];
     std::string name;
-    auto it = g_NameCache.find(g_Objects[i].ptr);
-    if (it != g_NameCache.end()) {
-      name = it->second;
+    EntityCategory cat;
+
+    auto it = g_EntityCache.find(g_Objects[i].ptr);
+    if (it != g_EntityCache.end()) {
+      name = it->second.name;
+      cat = it->second.cat;
     } else {
       char nameBuf[256];
       if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
           nameBuf[0] != '\0') {
         name = nameBuf;
       } else {
-        name = ""; // Mark as empty to avoid re-lookup
+        name = "";
       }
-      g_NameCache[g_Objects[i].ptr] = name;
+      cat = GetEntityCategory(name);
+      g_EntityCache[g_Objects[i].ptr] = {name, cat};
     }
+
+    if (!g_3DESPShowNonItems && name.empty())
+      continue;
+
+    if (!g_Categories[cat].enabled)
+      continue;
+
+    if (!g_SearchFilterLower.empty()) {
+      std::string lowerName = name;
+      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     ::tolower);
+      if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+        continue;
+    }
+
+    ImVec2 screen;
+    float dist = 0.0f;
+    if (!WorldToScreen(obj, screen, &dist))
+      continue;
 
     if (!name.empty()) {
-      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", name.c_str(), dist);
+      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", name.c_str(),
+                  dist);
     } else if (g_3DESPShowNonItems) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
-    } else {
-      continue;
     }
 
-    ImU32 color = IM_COL32(255, 255, 0, 220);
+    ImU32 color = g_Categories[cat].color;
     draw->AddCircleFilled(screen, 3.0f, color);
 
     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -568,6 +736,14 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
     ImGuiIO &io = ImGui::GetIO();
     io.MouseDrawCursor = g_ShowMenu;
 
+    if (g_SearchFilter[0] != '\0') {
+      g_SearchFilterLower = g_SearchFilter;
+      std::transform(g_SearchFilterLower.begin(), g_SearchFilterLower.end(),
+                     g_SearchFilterLower.begin(), ::tolower);
+    } else {
+      g_SearchFilterLower = "";
+    }
+
     if (g_ShowMenu) {
       ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
       ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -607,7 +783,27 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
 
       if (g_ItemESP || g_3DESP) {
         ImGui::Checkbox("Show non-items", &g_3DESPShowNonItems);
-        ImGui::SetItemTooltip("Display all objects, not just lootable items.");
+        ImGui::SetItemTooltip(
+            "Display all objects, not just lootable items.");
+
+        ImGui::SeparatorText("FILTERS");
+        ImGui::InputText("Search", g_SearchFilter, sizeof(g_SearchFilter));
+        ImGui::SetItemTooltip("Filter ESP and Radar by entity name.");
+
+        if (ImGui::TreeNode("Categories")) {
+          for (int i = 0; i < CAT_COUNT; i++) {
+            ImGui::PushID(i);
+            ImVec4 color = ImGui::ColorConvertU32ToFloat4(g_Categories[i].color);
+            ImGui::ColorEdit4("##color", (float *)&color,
+                              ImGuiColorEditFlags_NoInputs |
+                                  ImGuiColorEditFlags_NoLabel);
+            g_Categories[i].color = ImGui::ColorConvertFloat4ToU32(color);
+            ImGui::SameLine();
+            ImGui::Checkbox(g_Categories[i].name, &g_Categories[i].enabled);
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
       }
 
       ImGui::SeparatorText("PLAYER STATUS");
