@@ -104,6 +104,9 @@ struct ViewData {
 };
 ViewData g_ViewData;
 
+int g_TrackedEntityID = -1;
+bool g_HideEmptyNames = true;
+
 // Player Data
 struct PlayerData {
   float x, y, z;
@@ -377,7 +380,7 @@ void UpdateObjectList() {
   static unsigned int frameCount = 0;
   frameCount++;
 
-  if (!g_ItemESP && !g_3DESP) {
+  if (!g_ItemESP && !g_3DESP && !g_ShowMenu && g_TrackedEntityID == -1) {
     g_ObjectCount = 0;
     return;
   }
@@ -590,14 +593,15 @@ void DrawRadar() {
   ImGui::End();
 }
 
-bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
+bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr,
+                   bool ignoreDistance = false) {
   // World delta
   float dx = world.x - g_Player.camX;
   float dy = world.y - g_Player.camY;
   float dz = world.z - g_Player.camZ;
 
   float distSq = dx * dx + dy * dy + dz * dz;
-  if (distSq > g_ESPDistance * g_ESPDistance)
+  if (!ignoreDistance && distSq > g_ESPDistance * g_ESPDistance)
     return false;
 
   float dist = sqrtf(distSq);
@@ -634,12 +638,16 @@ bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr) {
 
 
 void Draw3DESP(IDirect3DDevice9 *device) {
-  if (!g_3DESP || g_ObjectCount == 0)
+  if (g_ObjectCount == 0)
     return;
 
   ImDrawList *draw = ImGui::GetForegroundDrawList();
 
   for (int i = 0; i < g_ObjectCount; i++) {
+    bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
+    if (!g_3DESP && !isTracked)
+      continue;
+
     Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
 
     char label[300];
@@ -662,23 +670,25 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       g_EntityCache[g_Objects[i].ptr] = {name, cat};
     }
 
-    if (!g_3DESPShowNonItems && name.empty())
+    if (!isTracked && !g_3DESPShowNonItems && name.empty())
       continue;
 
-    if (!g_Categories[cat].enabled)
-      continue;
-
-    if (!g_SearchFilterLower.empty()) {
-      std::string lowerName = name;
-      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                     ::tolower);
-      if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+    if (!isTracked) {
+      if (!g_Categories[cat].enabled)
         continue;
+
+      if (!g_SearchFilterLower.empty()) {
+        std::string lowerName = name;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                       ::tolower);
+        if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+          continue;
+      }
     }
 
     ImVec2 screen;
     float dist = 0.0f;
-    if (!WorldToScreen(obj, screen, &dist))
+    if (!WorldToScreen(obj, screen, &dist, isTracked))
       continue;
 
     if (!name.empty()) {
@@ -688,7 +698,10 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     }
 
-    ImU32 color = g_Categories[cat].color;
+    ImU32 color = isTracked ? IM_COL32(255, 255, 255, 255) : g_Categories[cat].color;
+    if (isTracked) {
+      draw->AddCircle(screen, 8.0f, color, 0, 2.0f);
+    }
     draw->AddCircleFilled(screen, 3.0f, color);
 
     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -747,15 +760,15 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
     if (g_ShowMenu) {
       ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
       ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-      ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
 
-      ImGui::Begin("SS2 Hack Menu", &g_ShowMenu,
-                   ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_AlwaysAutoResize);
+      ImGui::Begin("SS2 Hack Menu", &g_ShowMenu);
       ImGui::Text("INSERT to hide menu");
       ImGui::Separator();
 
-      ImGui::SeparatorText("GENERAL");
+      if (ImGui::BeginTabBar("Tabs")) {
+        if (ImGui::BeginTabItem("General")) {
+          ImGui::SeparatorText("GENERAL");
       ImGui::Checkbox("Block Game Input", &g_BlockInput);
       ImGui::SetItemTooltip("Stop keyboard and mouse events from reaching the game.");
 
@@ -787,7 +800,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
             "Display all objects, not just lootable items.");
 
         ImGui::SeparatorText("FILTERS");
-        ImGui::InputText("Search", g_SearchFilter, sizeof(g_SearchFilter));
+        if (ImGui::InputText("Search", g_SearchFilter, sizeof(g_SearchFilter))) {
+          g_SearchFilterLower = g_SearchFilter;
+          std::transform(g_SearchFilterLower.begin(), g_SearchFilterLower.end(),
+                         g_SearchFilterLower.begin(), ::tolower);
+        }
         ImGui::SetItemTooltip("Filter ESP and Radar by entity name.");
 
         if (ImGui::TreeNode("Categories")) {
@@ -806,21 +823,156 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
         }
       }
 
-      ImGui::SeparatorText("PLAYER STATUS");
-      ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
-                  g_Player.z);
+          ImGui::SeparatorText("PLAYER STATUS");
+          ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
+                      g_Player.z);
 
-      ImGui::Text("Pitch: %d", g_Player.playerUpDn);
-      ImGui::Text("Yaw: %d", g_Player.playerLftRt);
+          ImGui::Text("Pitch: %d", g_Player.playerUpDn);
+          ImGui::Text("Yaw: %d", g_Player.playerLftRt);
 
-      ImGui::SeparatorText("CAMERA STATUS");
-      ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.camX, g_Player.camY,
-                  g_Player.camZ);
+          ImGui::SeparatorText("CAMERA STATUS");
+          ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.camX, g_Player.camY,
+                      g_Player.camZ);
 
-      ImGui::Text("Pitch: %d", g_Player.camUpDn);
-      ImGui::Text("Yaw: %d", g_Player.camLftRt);
-      ImGui::Text("Roll: %d", g_Player.camRoll);
+          ImGui::Text("Pitch: %d", g_Player.camUpDn);
+          ImGui::Text("Yaw: %d", g_Player.camLftRt);
+          ImGui::Text("Roll: %d", g_Player.camRoll);
+          ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Explorer")) {
+          ImGui::SeparatorText("ENTITY EXPLORER");
+          ImGui::Checkbox("Hide unnamed", &g_HideEmptyNames);
+          ImGui::SameLine();
+          static char explorerFilter[64] = "";
+          ImGui::InputText("Filter##Explorer", explorerFilter, 64);
+
+          std::string lowerFilter = explorerFilter;
+          std::transform(lowerFilter.begin(), lowerFilter.end(),
+                         lowerFilter.begin(), ::tolower);
+
+          if (ImGui::BeginTable("Entities", 4,
+                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_BordersOuter |
+                                    ImGuiTableFlags_Resizable |
+                                    ImGuiTableFlags_Sortable)) {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableSetupColumn("Cat");
+            ImGui::TableSetupColumn("Dist", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableSetupColumn("Track", ImGuiTableColumnFlags_WidthFixed |
+                                                 ImGuiTableColumnFlags_NoSort,
+                                    40.0f);
+            ImGui::TableHeadersRow();
+
+            // Prepare list for display (filtered)
+            std::vector<int> indices;
+            for (int i = 0; i < g_ObjectCount; i++) {
+              std::string name;
+              auto it = g_EntityCache.find(g_Objects[i].ptr);
+              if (it != g_EntityCache.end()) {
+                name = it->second.name;
+              } else {
+                char nameBuf[256];
+                if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
+                                      256) &&
+                    nameBuf[0] != '\0') {
+                  name = nameBuf;
+                } else {
+                  name = "";
+                }
+                g_EntityCache[g_Objects[i].ptr] = {name,
+                                                   GetEntityCategory(name)};
+              }
+
+              if (g_HideEmptyNames && name.empty())
+                continue;
+
+              if (!lowerFilter.empty()) {
+                std::string lowerName = name;
+                std::transform(lowerName.begin(), lowerName.end(),
+                               lowerName.begin(), ::tolower);
+                if (lowerName.find(lowerFilter) == std::string::npos)
+                  continue;
+              }
+
+              indices.push_back(i);
+            }
+
+            // Always sort if requested
+            if (ImGuiTableSortSpecs *sortSpecs = ImGui::TableGetSortSpecs()) {
+              std::sort(indices.begin(), indices.end(), [&](int a, int b) {
+                const auto &spec = sortSpecs->Specs[0];
+                int res = 0;
+
+                if (spec.ColumnIndex == 0) { // Name
+                  res = g_EntityCache[g_Objects[a].ptr].name.compare(
+                      g_EntityCache[g_Objects[b].ptr].name);
+                } else if (spec.ColumnIndex == 1) { // Cat
+                  res = strcmp(
+                      g_Categories[g_EntityCache[g_Objects[a].ptr].cat].name,
+                      g_Categories[g_EntityCache[g_Objects[b].ptr].cat].name);
+                } else if (spec.ColumnIndex == 2) { // Dist
+                  float dxA = g_Objects[a].x - g_Player.camX;
+                  float dyA = g_Objects[a].y - g_Player.camY;
+                  float dzA = g_Objects[a].z - g_Player.camZ;
+                  float distA = dxA * dxA + dyA * dyA + dzA * dzA;
+
+                  float dxB = g_Objects[b].x - g_Player.camX;
+                  float dyB = g_Objects[b].y - g_Player.camY;
+                  float dzB = g_Objects[b].z - g_Player.camZ;
+                  float distB = dxB * dxB + dyB * dyB + dzB * dzB;
+
+                  if (distA < distB)
+                    res = -1;
+                  else if (distA > distB)
+                    res = 1;
+                }
+
+                if (spec.SortDirection == ImGuiSortDirection_Descending)
+                  return res > 0;
+                return res < 0;
+              });
+            }
+
+            for (int i : indices) {
+              std::string name = g_EntityCache[g_Objects[i].ptr].name;
+              EntityCategory cat = g_EntityCache[g_Objects[i].ptr].cat;
+
+              float dx = g_Objects[i].x - g_Player.camX;
+              float dy = g_Objects[i].y - g_Player.camY;
+              float dz = g_Objects[i].z - g_Player.camZ;
+              float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+              ImGui::TableNextRow();
+              if (dist > g_ESPDistance) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       IM_COL32(80, 20, 20, 100));
+              }
+
+              ImGui::TableSetColumnIndex(0);
+              ImGui::Text("%s", name.empty() ? "(empty)" : name.c_str());
+
+              ImGui::TableSetColumnIndex(1);
+              ImGui::Text("%s", g_Categories[cat].name);
+
+              ImGui::TableSetColumnIndex(2);
+              ImGui::Text("%.0f", dist);
+
+              ImGui::TableSetColumnIndex(3);
+              ImGui::PushID(i + 10000);
+              bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
+              if (ImGui::Checkbox("##track", &isTracked)) {
+                g_TrackedEntityID = isTracked ? g_Objects[i].id : -1;
+              }
+              ImGui::PopID();
+            }
+            ImGui::EndTable();
+          }
+          ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+      }
       ImGui::End();
     }
 
