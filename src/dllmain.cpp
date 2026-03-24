@@ -104,6 +104,13 @@ struct ViewData {
 };
 ViewData g_ViewData;
 
+struct Waypoint {
+  char name[64];
+  float x, y, z;
+};
+std::vector<Waypoint> g_Waypoints;
+int g_TrackedEntityID = -1;
+
 // Player Data
 struct PlayerData {
   float x, y, z;
@@ -377,7 +384,7 @@ void UpdateObjectList() {
   static unsigned int frameCount = 0;
   frameCount++;
 
-  if (!g_ItemESP && !g_3DESP) {
+  if (!g_ItemESP && !g_3DESP && !g_ShowMenu && g_TrackedEntityID == -1) {
     g_ObjectCount = 0;
     return;
   }
@@ -439,6 +446,21 @@ void UpdateObjectList() {
 }
 
 void CleanUpHooks() {}
+
+void TeleportTo(float x, float y, float z, bool applyOffset = false) {
+  InitSS2Base();
+  uintptr_t base = g_SS2Base;
+  uintptr_t *playerPtrAddr = (uintptr_t *)(base + 0x3320);
+  if (playerPtrAddr && *playerPtrAddr) {
+    uintptr_t playerPtr = *playerPtrAddr;
+    __try {
+      *(float *)(playerPtr + 0x24) = x;
+      *(float *)(playerPtr + 0x28) = y;
+      *(float *)(playerPtr + 0x2c) = z + (applyOffset ? 2.0f : 0.0f);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+  }
+}
 
 void UpdatePlayerData() {
   InitSS2Base();
@@ -665,15 +687,19 @@ void Draw3DESP(IDirect3DDevice9 *device) {
     if (!g_3DESPShowNonItems && name.empty())
       continue;
 
-    if (!g_Categories[cat].enabled)
-      continue;
+    bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
 
-    if (!g_SearchFilterLower.empty()) {
-      std::string lowerName = name;
-      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                     ::tolower);
-      if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+    if (!isTracked) {
+      if (!g_Categories[cat].enabled)
         continue;
+
+      if (!g_SearchFilterLower.empty()) {
+        std::string lowerName = name;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                       ::tolower);
+        if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+          continue;
+      }
     }
 
     ImVec2 screen;
@@ -688,7 +714,10 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     }
 
-    ImU32 color = g_Categories[cat].color;
+    ImU32 color = isTracked ? IM_COL32(255, 255, 255, 255) : g_Categories[cat].color;
+    if (isTracked) {
+      draw->AddCircle(screen, 8.0f, color, 0, 2.0f);
+    }
     draw->AddCircleFilled(screen, 3.0f, color);
 
     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -747,15 +776,15 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
     if (g_ShowMenu) {
       ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
       ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-      ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
 
-      ImGui::Begin("SS2 Hack Menu", &g_ShowMenu,
-                   ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_AlwaysAutoResize);
+      ImGui::Begin("SS2 Hack Menu", &g_ShowMenu);
       ImGui::Text("INSERT to hide menu");
       ImGui::Separator();
 
-      ImGui::SeparatorText("GENERAL");
+      if (ImGui::BeginTabBar("Tabs")) {
+        if (ImGui::BeginTabItem("General")) {
+          ImGui::SeparatorText("GENERAL");
       ImGui::Checkbox("Block Game Input", &g_BlockInput);
       ImGui::SetItemTooltip("Stop keyboard and mouse events from reaching the game.");
 
@@ -806,21 +835,165 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
         }
       }
 
-      ImGui::SeparatorText("PLAYER STATUS");
-      ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
-                  g_Player.z);
+          ImGui::SeparatorText("PLAYER STATUS");
+          ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
+                      g_Player.z);
 
-      ImGui::Text("Pitch: %d", g_Player.playerUpDn);
-      ImGui::Text("Yaw: %d", g_Player.playerLftRt);
+          ImGui::Text("Pitch: %d", g_Player.playerUpDn);
+          ImGui::Text("Yaw: %d", g_Player.playerLftRt);
 
-      ImGui::SeparatorText("CAMERA STATUS");
-      ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.camX, g_Player.camY,
-                  g_Player.camZ);
+          ImGui::SeparatorText("CAMERA STATUS");
+          ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.camX, g_Player.camY,
+                      g_Player.camZ);
 
-      ImGui::Text("Pitch: %d", g_Player.camUpDn);
-      ImGui::Text("Yaw: %d", g_Player.camLftRt);
-      ImGui::Text("Roll: %d", g_Player.camRoll);
+          ImGui::Text("Pitch: %d", g_Player.camUpDn);
+          ImGui::Text("Yaw: %d", g_Player.camLftRt);
+          ImGui::Text("Roll: %d", g_Player.camRoll);
+          ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Explorer")) {
+          ImGui::SeparatorText("ENTITY EXPLORER");
+          static char explorerFilter[64] = "";
+          ImGui::InputText("Filter##Explorer", explorerFilter, 64);
+
+          std::string lowerFilter = explorerFilter;
+          std::transform(lowerFilter.begin(), lowerFilter.end(),
+                         lowerFilter.begin(), ::tolower);
+
+          if (ImGui::BeginTable("Entities", 5,
+                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_BordersOuter |
+                                    ImGuiTableFlags_Resizable)) {
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Cat");
+            ImGui::TableSetupColumn("Dist", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableSetupColumn("Track", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableSetupColumn("Tele", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableHeadersRow();
+
+            for (int i = 0; i < g_ObjectCount; i++) {
+              std::string name;
+              EntityCategory cat;
+              auto it = g_EntityCache.find(g_Objects[i].ptr);
+              if (it != g_EntityCache.end()) {
+                name = it->second.name;
+                cat = it->second.cat;
+              } else {
+                char nameBuf[256];
+                if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
+                                      256) &&
+                    nameBuf[0] != '\0') {
+                  name = nameBuf;
+                } else {
+                  name = "";
+                }
+                cat = GetEntityCategory(name);
+                g_EntityCache[g_Objects[i].ptr] = {name, cat};
+              }
+
+              if (!lowerFilter.empty()) {
+                std::string lowerName = name;
+                std::transform(lowerName.begin(), lowerName.end(),
+                               lowerName.begin(), ::tolower);
+                if (lowerName.find(lowerFilter) == std::string::npos)
+                  continue;
+              }
+
+              float dx = g_Objects[i].x - g_Player.camX;
+              float dy = g_Objects[i].y - g_Player.camY;
+              float dz = g_Objects[i].z - g_Player.camZ;
+              float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+              ImGui::TableNextRow();
+              ImGui::TableSetColumnIndex(0);
+              ImGui::Text("%s", name.empty() ? "(empty)" : name.c_str());
+
+              ImGui::TableSetColumnIndex(1);
+              ImGui::Text("%s", g_Categories[cat].name);
+
+              ImGui::TableSetColumnIndex(2);
+              ImGui::Text("%.0f", dist);
+
+              ImGui::TableSetColumnIndex(3);
+              ImGui::PushID(i + 10000);
+              bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
+              if (ImGui::Checkbox("##track", &isTracked)) {
+                g_TrackedEntityID = isTracked ? g_Objects[i].id : -1;
+              }
+              ImGui::PopID();
+
+              ImGui::TableSetColumnIndex(4);
+              ImGui::PushID(i + 20000);
+              if (ImGui::Button("Go")) {
+                TeleportTo(g_Objects[i].x, g_Objects[i].y, g_Objects[i].z, true);
+              }
+              ImGui::PopID();
+            }
+            ImGui::EndTable();
+          }
+          ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Waypoints")) {
+          ImGui::SeparatorText("WAYPOINTS");
+          static char wpName[64] = "";
+          ImGui::InputText("Name", wpName, 64);
+          if (ImGui::Button("Save Current Position")) {
+            Waypoint wp;
+            if (wpName[0] == '\0') {
+              _snprintf_s(wp.name, 64, _TRUNCATE, "WP %zu", g_Waypoints.size());
+            } else {
+              strncpy_s(wp.name, 64, wpName, _TRUNCATE);
+            }
+            wp.x = g_Player.x;
+            wp.y = g_Player.y;
+            wp.z = g_Player.z;
+            g_Waypoints.push_back(wp);
+            wpName[0] = '\0';
+          }
+
+          ImGui::Separator();
+          if (ImGui::BeginTable("WaypointsList", 3,
+                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_BordersOuter)) {
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Go", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < g_Waypoints.size(); i++) {
+              ImGui::TableNextRow();
+              ImGui::TableSetColumnIndex(0);
+              ImGui::Text("%s", g_Waypoints[i].name);
+
+              ImGui::TableSetColumnIndex(1);
+              ImGui::PushID((int)i + 30000);
+              if (ImGui::Button("Go")) {
+                TeleportTo(g_Waypoints[i].x, g_Waypoints[i].y,
+                           g_Waypoints[i].z);
+              }
+              ImGui::PopID();
+
+              ImGui::TableSetColumnIndex(2);
+              ImGui::PushID((int)i + 40000);
+              if (ImGui::Button("X")) {
+                g_Waypoints.erase(g_Waypoints.begin() + i);
+                i--;
+              }
+              ImGui::PopID();
+            }
+            ImGui::EndTable();
+          }
+          ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+      }
       ImGui::End();
     }
 
