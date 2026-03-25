@@ -82,6 +82,7 @@ std::string g_SearchFilterLower = "";
 // Cache
 struct CachedEntity {
   std::string name;
+  std::string lowerName;
   EntityCategory cat;
 };
 std::unordered_map<uintptr_t, CachedEntity> g_EntityCache;
@@ -141,13 +142,9 @@ constexpr uintptr_t ADDR_IID_PROPMAN = 0x343050; // unk_743050 (GUID)
 
 uintptr_t g_SS2Base = 0;
 
-EntityCategory GetEntityCategory(const std::string &name) {
-  if (name.empty())
+EntityCategory GetEntityCategory(const std::string &lowerName) {
+  if (lowerName.empty())
     return CAT_UNKNOWN;
-
-  std::string lowerName = name;
-  std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                 ::tolower);
 
   // Enemies
   if (lowerName.find("hybrid") != std::string::npos ||
@@ -532,12 +529,22 @@ void DrawRadar() {
   float scale = 2.0f;
 
   for (int i = 0; i < g_ObjectCount; i++) {
+    float dx = g_Objects[i].x - g_Player.camX;
+    float dy = g_Objects[i].y - g_Player.camY;
+    float dz = fabsf(g_Objects[i].z - g_Player.camZ);
+
+    // Height filter - skip expensive map lookups for entities on other floors
+    if (dz > 5.0f)
+      continue;
+
     std::string name;
+    std::string lowerName;
     EntityCategory cat;
 
     auto it = g_EntityCache.find(g_Objects[i].ptr);
     if (it != g_EntityCache.end()) {
       name = it->second.name;
+      lowerName = it->second.lowerName;
       cat = it->second.cat;
     } else {
       char nameBuf[256];
@@ -547,8 +554,11 @@ void DrawRadar() {
       } else {
         name = "";
       }
-      cat = GetEntityCategory(name);
-      g_EntityCache[g_Objects[i].ptr] = {name, cat};
+      lowerName = name;
+      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     ::tolower);
+      cat = GetEntityCategory(lowerName);
+      g_EntityCache[g_Objects[i].ptr] = {name, lowerName, cat};
     }
 
     if (!g_3DESPShowNonItems && name.empty())
@@ -558,20 +568,9 @@ void DrawRadar() {
       continue;
 
     if (!g_SearchFilterLower.empty()) {
-      std::string lowerName = name;
-      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                     ::tolower);
       if (lowerName.find(g_SearchFilterLower) == std::string::npos)
         continue;
     }
-
-    float dx = g_Objects[i].x - g_Player.camX;
-    float dy = g_Objects[i].y - g_Player.camY;
-    float dz = fabsf(g_Objects[i].z - g_Player.camZ);
-
-    // Height filter
-    if (dz > 5.0f)
-      continue;
 
     // Movement Mapping:
     // Swapping and inverting signs to align with SS2 world space
@@ -650,13 +649,21 @@ void Draw3DESP(IDirect3DDevice9 *device) {
 
     Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
 
+    ImVec2 screen;
+    float dist = 0.0f;
+    // Skip expensive map lookups and filtering for entities that are off-screen or out of distance range
+    if (!WorldToScreen(obj, screen, &dist, isTracked))
+      continue;
+
     char label[300];
     std::string name;
+    std::string lowerName;
     EntityCategory cat;
 
     auto it = g_EntityCache.find(g_Objects[i].ptr);
     if (it != g_EntityCache.end()) {
       name = it->second.name;
+      lowerName = it->second.lowerName;
       cat = it->second.cat;
     } else {
       char nameBuf[256];
@@ -666,8 +673,11 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       } else {
         name = "";
       }
-      cat = GetEntityCategory(name);
-      g_EntityCache[g_Objects[i].ptr] = {name, cat};
+      lowerName = name;
+      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     ::tolower);
+      cat = GetEntityCategory(lowerName);
+      g_EntityCache[g_Objects[i].ptr] = {name, lowerName, cat};
     }
 
     if (!isTracked && !g_3DESPShowNonItems && name.empty())
@@ -678,18 +688,10 @@ void Draw3DESP(IDirect3DDevice9 *device) {
         continue;
 
       if (!g_SearchFilterLower.empty()) {
-        std::string lowerName = name;
-        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                       ::tolower);
         if (lowerName.find(g_SearchFilterLower) == std::string::npos)
           continue;
       }
     }
-
-    ImVec2 screen;
-    float dist = 0.0f;
-    if (!WorldToScreen(obj, screen, &dist, isTracked))
-      continue;
 
     if (!name.empty()) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", name.c_str(),
@@ -748,14 +750,6 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
     ImGui::NewFrame();
     ImGuiIO &io = ImGui::GetIO();
     io.MouseDrawCursor = g_ShowMenu;
-
-    if (g_SearchFilter[0] != '\0') {
-      g_SearchFilterLower = g_SearchFilter;
-      std::transform(g_SearchFilterLower.begin(), g_SearchFilterLower.end(),
-                     g_SearchFilterLower.begin(), ::tolower);
-    } else {
-      g_SearchFilterLower = "";
-    }
 
     if (g_ShowMenu) {
       ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
@@ -870,8 +864,9 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
             for (int i = 0; i < g_ObjectCount; i++) {
               std::string name;
               auto it = g_EntityCache.find(g_Objects[i].ptr);
+              CachedEntity* pCached = nullptr;
               if (it != g_EntityCache.end()) {
-                name = it->second.name;
+                pCached = &it->second;
               } else {
                 char nameBuf[256];
                 if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
@@ -881,17 +876,20 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                 } else {
                   name = "";
                 }
-                g_EntityCache[g_Objects[i].ptr] = {name,
-                                                   GetEntityCategory(name)};
+                std::string lowerName = name;
+                std::transform(lowerName.begin(), lowerName.end(),
+                               lowerName.begin(), ::tolower);
+                g_EntityCache[g_Objects[i].ptr] = {
+                    name, lowerName, GetEntityCategory(lowerName)};
+                pCached = &g_EntityCache[g_Objects[i].ptr];
               }
+              name = pCached->name;
 
               if (g_HideEmptyNames && name.empty())
                 continue;
 
               if (!lowerFilter.empty()) {
-                std::string lowerName = name;
-                std::transform(lowerName.begin(), lowerName.end(),
-                               lowerName.begin(), ::tolower);
+                const std::string &lowerName = pCached->lowerName;
                 if (lowerName.find(lowerFilter) == std::string::npos)
                   continue;
               }
