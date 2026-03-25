@@ -3,14 +3,14 @@
 #include "imgui.h"
 #include "imgui_impl_dx9.h"
 #include "imgui_impl_win32.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <windows.h>
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
 #include <vector>
-#include <algorithm>
+#include <windows.h>
 
 struct Vec3 {
   float x, y, z;
@@ -188,7 +188,7 @@ EntityCategory GetEntityCategory(const std::string &lowerName) {
 
   // Periodic Table Elements (Resources)
   static const std::vector<std::string> elements = {
-      "fermium", "gallium", "antimony", "yttrium", "californium",
+      "fermium", "gallium", "antimony",  "yttrium",    "californium",
       "osmium",  "iridium", "tellurium", "technetium", "barium"};
   for (const auto &el : elements) {
     if (lowerName.find(el) != std::string::npos)
@@ -635,7 +635,6 @@ bool WorldToScreen(const Vec3 &world, ImVec2 &out, float *outDist = nullptr,
   return true;
 }
 
-
 void Draw3DESP(IDirect3DDevice9 *device) {
   if (g_ObjectCount == 0)
     return;
@@ -700,7 +699,8 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     }
 
-    ImU32 color = isTracked ? IM_COL32(255, 255, 255, 255) : g_Categories[cat].color;
+    ImU32 color =
+        isTracked ? IM_COL32(255, 255, 255, 255) : g_Categories[cat].color;
     if (isTracked) {
       draw->AddCircle(screen, 8.0f, color, 0, 2.0f);
     }
@@ -708,9 +708,10 @@ void Draw3DESP(IDirect3DDevice9 *device) {
 
     ImVec2 textSize = ImGui::CalcTextSize(label);
     ImVec2 textPos = ImVec2(screen.x + 6, screen.y - 6);
-    draw->AddRectFilled(ImVec2(textPos.x - 2, textPos.y - 1),
-                       ImVec2(textPos.x + textSize.x + 2, textPos.y + textSize.y + 1),
-                       IM_COL32(0, 0, 0, 120));
+    draw->AddRectFilled(
+        ImVec2(textPos.x - 2, textPos.y - 1),
+        ImVec2(textPos.x + textSize.x + 2, textPos.y + textSize.y + 1),
+        IM_COL32(0, 0, 0, 120));
 
     draw->AddText(textPos, IM_COL32(255, 255, 255, 200), label);
   }
@@ -763,59 +764,65 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
       if (ImGui::BeginTabBar("Tabs")) {
         if (ImGui::BeginTabItem("General")) {
           ImGui::SeparatorText("GENERAL");
-      ImGui::Checkbox("Block Game Input", &g_BlockInput);
-      ImGui::SetItemTooltip("Stop keyboard and mouse events from reaching the game.");
+          ImGui::Checkbox("Block Game Input", &g_BlockInput);
+          ImGui::SetItemTooltip(
+              "Stop keyboard and mouse events from reaching the game.");
 
-      ImGui::SeparatorText("VISUALS");
-      ImGui::Checkbox("Wallhack", &g_Wallhack);
-      ImGui::SetItemTooltip("See through walls (Z-buffer disabled).");
-      if (g_Wallhack) {
-        ImGui::SliderFloat("Transparency", &g_Transparency, 0.1f, 1.0f);
-        ImGui::SetItemTooltip("Adjust the opacity of world geometry.");
-      }
-      ImGui::Checkbox("Wireframe", &g_Wireframe);
-      ImGui::SetItemTooltip("Render the world as a mesh grid.");
-      ImGui::Checkbox("Fullbright", &g_Fullbright);
-      ImGui::SetItemTooltip("Disable lightmaps for consistent maximum brightness.");
-
-      ImGui::SeparatorText("RADAR & ESP");
-      ImGui::Checkbox("Item Radar", &g_ItemESP);
-      ImGui::SetItemTooltip("Show nearby items on the 2D radar overlay.");
-      ImGui::Checkbox("Item ESP", &g_3DESP);
-      ImGui::SetItemTooltip("Display item names and distances in 3D world space.");
-      if (g_3DESP) {
-        ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f);
-        ImGui::SetItemTooltip("Maximum distance to display 3D labels.");
-      }
-
-      if (g_ItemESP || g_3DESP) {
-        ImGui::Checkbox("Show non-items", &g_3DESPShowNonItems);
-        ImGui::SetItemTooltip(
-            "Display all objects, not just lootable items.");
-
-        ImGui::SeparatorText("FILTERS");
-        if (ImGui::InputText("Search", g_SearchFilter, sizeof(g_SearchFilter))) {
-          g_SearchFilterLower = g_SearchFilter;
-          std::transform(g_SearchFilterLower.begin(), g_SearchFilterLower.end(),
-                         g_SearchFilterLower.begin(), ::tolower);
-        }
-        ImGui::SetItemTooltip("Filter ESP and Radar by entity name.");
-
-        if (ImGui::TreeNode("Categories")) {
-          for (int i = 0; i < CAT_COUNT; i++) {
-            ImGui::PushID(i);
-            ImVec4 color = ImGui::ColorConvertU32ToFloat4(g_Categories[i].color);
-            ImGui::ColorEdit4("##color", (float *)&color,
-                              ImGuiColorEditFlags_NoInputs |
-                                  ImGuiColorEditFlags_NoLabel);
-            g_Categories[i].color = ImGui::ColorConvertFloat4ToU32(color);
-            ImGui::SameLine();
-            ImGui::Checkbox(g_Categories[i].name, &g_Categories[i].enabled);
-            ImGui::PopID();
+          ImGui::SeparatorText("VISUALS");
+          ImGui::Checkbox("Wallhack", &g_Wallhack);
+          ImGui::SetItemTooltip("See through walls (Z-buffer disabled).");
+          if (g_Wallhack) {
+            ImGui::SliderFloat("Transparency", &g_Transparency, 0.1f, 1.0f);
+            ImGui::SetItemTooltip("Adjust the opacity of world geometry.");
           }
-          ImGui::TreePop();
-        }
-      }
+          ImGui::Checkbox("Wireframe", &g_Wireframe);
+          ImGui::SetItemTooltip("Render the world as a mesh grid.");
+          ImGui::Checkbox("Fullbright", &g_Fullbright);
+          ImGui::SetItemTooltip(
+              "Disable lightmaps for consistent maximum brightness.");
+
+          ImGui::SeparatorText("RADAR & ESP");
+          ImGui::Checkbox("Item Radar", &g_ItemESP);
+          ImGui::SetItemTooltip("Show nearby items on the 2D radar overlay.");
+          ImGui::Checkbox("Item ESP", &g_3DESP);
+          ImGui::SetItemTooltip(
+              "Display item names and distances in 3D world space.");
+          if (g_3DESP) {
+            ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f);
+            ImGui::SetItemTooltip("Maximum distance to display 3D labels.");
+          }
+
+          if (g_ItemESP || g_3DESP) {
+            ImGui::Checkbox("Show non-items", &g_3DESPShowNonItems);
+            ImGui::SetItemTooltip(
+                "Display all objects, not just lootable items.");
+
+            ImGui::SeparatorText("FILTERS");
+            if (ImGui::InputText("Search", g_SearchFilter,
+                                 sizeof(g_SearchFilter))) {
+              g_SearchFilterLower = g_SearchFilter;
+              std::transform(g_SearchFilterLower.begin(),
+                             g_SearchFilterLower.end(),
+                             g_SearchFilterLower.begin(), ::tolower);
+            }
+            ImGui::SetItemTooltip("Filter ESP and Radar by entity name.");
+
+            if (ImGui::TreeNode("Categories")) {
+              for (int i = 0; i < CAT_COUNT; i++) {
+                ImGui::PushID(i);
+                ImVec4 color =
+                    ImGui::ColorConvertU32ToFloat4(g_Categories[i].color);
+                ImGui::ColorEdit4("##color", (float *)&color,
+                                  ImGuiColorEditFlags_NoInputs |
+                                      ImGuiColorEditFlags_NoLabel);
+                g_Categories[i].color = ImGui::ColorConvertFloat4ToU32(color);
+                ImGui::SameLine();
+                ImGui::Checkbox(g_Categories[i].name, &g_Categories[i].enabled);
+                ImGui::PopID();
+              }
+              ImGui::TreePop();
+            }
+          }
 
           ImGui::SeparatorText("PLAYER STATUS");
           ImGui::Text("X: %.2f Y: %.2f Z: %.2f", g_Player.x, g_Player.y,
@@ -837,25 +844,38 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
         if (ImGui::BeginTabItem("Explorer")) {
           ImGui::SeparatorText("ENTITY EXPLORER");
           ImGui::Checkbox("Hide unnamed", &g_HideEmptyNames);
+          ImGui::SetItemTooltip(
+              "Exclude entities without a name property from the list.");
           ImGui::SameLine();
           static char explorerFilter[64] = "";
           ImGui::InputText("Filter##Explorer", explorerFilter, 64);
+          ImGui::SetItemTooltip("Filter entities by name.");
+
+          if (g_TrackedEntityID != -1) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Tracking")) {
+              g_TrackedEntityID = -1;
+            }
+            ImGui::SetItemTooltip(
+                "Stop tracking the currently selected entity.");
+          }
 
           std::string lowerFilter = explorerFilter;
           std::transform(lowerFilter.begin(), lowerFilter.end(),
                          lowerFilter.begin(), ::tolower);
 
-          if (ImGui::BeginTable("Entities", 4,
-                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
-                                    ImGuiTableFlags_BordersOuter |
-                                    ImGuiTableFlags_Resizable |
-                                    ImGuiTableFlags_Sortable)) {
+          if (ImGui::BeginTable(
+                  "Entities", 4,
+                  ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable |
+                      ImGuiTableFlags_Sortable)) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort);
             ImGui::TableSetupColumn("Cat");
             ImGui::TableSetupColumn("Dist", ImGuiTableColumnFlags_WidthFixed,
                                     40.0f);
-            ImGui::TableSetupColumn("Track", ImGuiTableColumnFlags_WidthFixed |
-                                                 ImGuiTableColumnFlags_NoSort,
+            ImGui::TableSetupColumn("Track",
+                                    ImGuiTableColumnFlags_WidthFixed |
+                                        ImGuiTableColumnFlags_NoSort,
                                     40.0f);
             ImGui::TableHeadersRow();
 
@@ -963,6 +983,8 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               if (ImGui::Checkbox("##track", &isTracked)) {
                 g_TrackedEntityID = isTracked ? g_Objects[i].id : -1;
               }
+              ImGui::SetItemTooltip(
+                  "Highlight this entity in the 3D world and on the radar.");
               ImGui::PopID();
             }
             ImGui::EndTable();
