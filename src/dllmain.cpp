@@ -650,7 +650,8 @@ void Draw3DESP(IDirect3DDevice9 *device) {
 
     ImVec2 screen;
     float dist = 0.0f;
-    // Skip expensive map lookups and filtering for entities that are off-screen or out of distance range
+    // Skip expensive map lookups and filtering for entities that are off-screen
+    // or out of distance range
     if (!WorldToScreen(obj, screen, &dist, isTracked))
       continue;
 
@@ -848,8 +849,17 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               "Exclude entities without a name property from the list.");
           ImGui::SameLine();
           static char explorerFilter[64] = "";
+          ImGui::SetNextItemWidth(120.0f);
           ImGui::InputText("Filter##Explorer", explorerFilter, 64);
           ImGui::SetItemTooltip("Filter entities by name.");
+
+          if (explorerFilter[0] != '\0') {
+            ImGui::SameLine();
+            if (ImGui::Button("X##clearFilter")) {
+              explorerFilter[0] = '\0';
+            }
+            ImGui::SetItemTooltip("Clear search filter.");
+          }
 
           if (g_TrackedEntityID != -1) {
             ImGui::SameLine();
@@ -863,6 +873,47 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           std::string lowerFilter = explorerFilter;
           std::transform(lowerFilter.begin(), lowerFilter.end(),
                          lowerFilter.begin(), ::tolower);
+
+          // Pre-filter and count entities
+          std::vector<int> indices;
+          for (int i = 0; i < g_ObjectCount; i++) {
+            std::string name;
+            auto it = g_EntityCache.find(g_Objects[i].ptr);
+            CachedEntity *pCached = nullptr;
+            if (it != g_EntityCache.end()) {
+              pCached = &it->second;
+            } else {
+              char nameBuf[256];
+              if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
+                                    256) &&
+                  nameBuf[0] != '\0') {
+                name = nameBuf;
+              } else {
+                name = "";
+              }
+              std::string lowerName = name;
+              std::transform(lowerName.begin(), lowerName.end(),
+                             lowerName.begin(), ::tolower);
+              g_EntityCache[g_Objects[i].ptr] = {name, lowerName,
+                                                 GetEntityCategory(lowerName)};
+              pCached = &g_EntityCache[g_Objects[i].ptr];
+            }
+            name = pCached->name;
+
+            if (g_HideEmptyNames && name.empty())
+              continue;
+
+            if (!lowerFilter.empty()) {
+              const std::string &lowerName = pCached->lowerName;
+              if (lowerName.find(lowerFilter) == std::string::npos)
+                continue;
+            }
+
+            indices.push_back(i);
+          }
+
+          ImGui::TextDisabled("Showing %d / %d entities", (int)indices.size(),
+                              g_ObjectCount);
 
           if (ImGui::BeginTable(
                   "Entities", 4,
@@ -879,42 +930,12 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                                     40.0f);
             ImGui::TableHeadersRow();
 
-            // Prepare list for display (filtered)
-            std::vector<int> indices;
-            for (int i = 0; i < g_ObjectCount; i++) {
-              std::string name;
-              auto it = g_EntityCache.find(g_Objects[i].ptr);
-              CachedEntity* pCached = nullptr;
-              if (it != g_EntityCache.end()) {
-                pCached = &it->second;
-              } else {
-                char nameBuf[256];
-                if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
-                                      256) &&
-                    nameBuf[0] != '\0') {
-                  name = nameBuf;
-                } else {
-                  name = "";
-                }
-                std::string lowerName = name;
-                std::transform(lowerName.begin(), lowerName.end(),
-                               lowerName.begin(), ::tolower);
-                g_EntityCache[g_Objects[i].ptr] = {
-                    name, lowerName, GetEntityCategory(lowerName)};
-                pCached = &g_EntityCache[g_Objects[i].ptr];
-              }
-              name = pCached->name;
-
-              if (g_HideEmptyNames && name.empty())
-                continue;
-
-              if (!lowerFilter.empty()) {
-                const std::string &lowerName = pCached->lowerName;
-                if (lowerName.find(lowerFilter) == std::string::npos)
-                  continue;
-              }
-
-              indices.push_back(i);
+            if (indices.empty()) {
+              ImGui::TableNextRow();
+              ImGui::TableSetColumnIndex(0);
+              ImGui::TextDisabled("No entities matching filter.");
+              ImGui::EndTable();
+              goto end_explorer;
             }
 
             // Always sort if requested
@@ -963,7 +984,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               float dist = sqrtf(dx * dx + dy * dy + dz * dz);
 
               ImGui::TableNextRow();
-              if (dist > g_ESPDistance) {
+              bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
+              if (isTracked) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       IM_COL32(20, 80, 20, 100));
+              } else if (dist > g_ESPDistance) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                                        IM_COL32(80, 20, 20, 100));
               }
@@ -979,7 +1004,6 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
 
               ImGui::TableSetColumnIndex(3);
               ImGui::PushID(i + 10000);
-              bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
               if (ImGui::Checkbox("##track", &isTracked)) {
                 g_TrackedEntityID = isTracked ? g_Objects[i].id : -1;
               }
@@ -989,6 +1013,7 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
             }
             ImGui::EndTable();
           }
+        end_explorer:
           ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

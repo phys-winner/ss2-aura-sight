@@ -9,3 +9,7 @@
 ## 2026-03-25 - [Contextual State Reset]
 **Learning:** In complex tables (like an Entity Explorer) where users can 'Track' or 'Select' specific rows, it is a significant UX burden to force the user to locate the specific active row to undo the action. Providing a contextual 'Clear' or 'Reset' button that only appears when a selection is active significantly reduces friction and improves state discoverability.
 **Action:** Always provide a high-level "Clear [State]" button near controls that can toggle specific, persistent highlights or tracking modes.
+
+## 2026-03-26 - [Feedback in Filtered Lists]
+**Learning:** In applications that scan large amounts of data (like an entity explorer), users need immediate feedback on the state of their filters. Providing an entity count (e.g., "Showing 10 / 500") and a clear "No results" message for empty states prevents confusion about whether the application is still working. Additionally, highlighting the *currently* active/tracked row with a distinct color (e.g., green for tracking) provides essential visual continuity when the list is long or frequently changing.
+**Action:** Always include "Showing X / Y" status labels and explicit empty states for filtered lists, and use distinct row highlighting to anchor the user's focus on active selections.
