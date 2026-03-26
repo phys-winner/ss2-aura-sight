@@ -387,7 +387,7 @@ void UpdateObjectList() {
     __try {
       for (int i = 0; i < g_ObjectCount; i++) {
         uintptr_t itemPtr = g_Objects[i].ptr;
-        if (itemPtr && itemPtr > 0x10000) {
+        if (itemPtr > 0x10000) {
           g_Objects[i].x = *(float *)(itemPtr + 0);
           g_Objects[i].y = *(float *)(itemPtr + 4);
           g_Objects[i].z = *(float *)(itemPtr + 8);
@@ -415,7 +415,7 @@ void UpdateObjectList() {
           // scan entire list
           for (int i = 0; i < MAX_OBJECTS; i++) {
             uintptr_t itemPtr = items[i];
-            if (itemPtr && itemPtr > 0x10000) { // Basic validity check
+            if (itemPtr > 0x10000) { // Basic validity check
               float x = *(float *)(itemPtr + 0);
               float y = *(float *)(itemPtr + 4);
               float z = *(float *)(itemPtr + 8);
@@ -485,8 +485,10 @@ void UpdatePlayerData() {
   g_ViewData.cosRoll = cosf(roll);
 
   float cy = ImGui::GetIO().DisplaySize.y * 0.5f;
-  float fovRad = 73.74f * (3.14159265f / 180.0f);
-  g_ViewData.fovScale = cy / tanf(fovRad * 0.5f);
+  // Optimization: Pre-calculate FOV scale factor to avoid redundant tanf calls
+  static const float fovScaleFactor =
+      1.0f / tanf(73.74f * (3.14159265f / 180.0f) * 0.5f);
+  g_ViewData.fovScale = cy * fovScaleFactor;
 }
 
 void DrawRadar() {
@@ -516,14 +518,14 @@ void DrawRadar() {
   // Angle negation to fix Left/Right inversion
   float angle = -(float)g_Player.camLftRt * (2.0f * 3.14159265f / 65536.0f);
 
-  float forwardX = sin(angle);
-  float forwardY = -cos(angle);
+  float forwardX = sinf(angle);
+  float forwardY = -cosf(angle);
 
   ImVec2 p1 = ImVec2(center.x + forwardX * 12.0f, center.y + forwardY * 12.0f);
-  ImVec2 p2 = ImVec2(center.x + sin(angle + 2.5f) * 7.0f,
-                     center.y - cos(angle + 2.5f) * 7.0f);
-  ImVec2 p3 = ImVec2(center.x + sin(angle - 2.5f) * 7.0f,
-                     center.y - cos(angle - 2.5f) * 7.0f);
+  ImVec2 p2 = ImVec2(center.x + sinf(angle + 2.5f) * 7.0f,
+                     center.y - cosf(angle + 2.5f) * 7.0f);
+  ImVec2 p3 = ImVec2(center.x + sinf(angle - 2.5f) * 7.0f,
+                     center.y - cosf(angle - 2.5f) * 7.0f);
   drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(0, 255, 255, 255));
 
   float scale = 2.0f;
@@ -537,56 +539,54 @@ void DrawRadar() {
     if (dz > 5.0f)
       continue;
 
-    std::string name;
-    std::string lowerName;
-    EntityCategory cat;
-
-    auto it = g_EntityCache.find(g_Objects[i].ptr);
-    if (it != g_EntityCache.end()) {
-      name = it->second.name;
-      lowerName = it->second.lowerName;
-      cat = it->second.cat;
-    } else {
-      char nameBuf[256];
-      if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
-          nameBuf[0] != '\0') {
-        name = nameBuf;
-      } else {
-        name = "";
-      }
-      lowerName = name;
-      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                     ::tolower);
-      cat = GetEntityCategory(lowerName);
-      g_EntityCache[g_Objects[i].ptr] = {name, lowerName, cat};
-    }
-
-    if (!g_3DESPShowNonItems && name.empty())
-      continue;
-
-    if (!g_Categories[cat].enabled)
-      continue;
-
-    if (!g_SearchFilterLower.empty()) {
-      if (lowerName.find(g_SearchFilterLower) == std::string::npos)
-        continue;
-    }
-
     // Movement Mapping:
     // Swapping and inverting signs to align with SS2 world space
     float screenX = center.x - dy * scale;
     float screenY = center.y - dx * scale;
 
+    // Spatial culling: only process entities that are actually on the radar
+    // screen
+    if (screenX <= pos.x || screenX >= pos.x + size.x || screenY <= pos.y ||
+        screenY >= pos.y + size.y)
+      continue;
+
+    const CachedEntity *pEnt = nullptr;
+    auto it = g_EntityCache.find(g_Objects[i].ptr);
+    if (it != g_EntityCache.end()) {
+      pEnt = &it->second;
+    } else {
+      char nameBuf[256];
+      std::string name;
+      if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
+          nameBuf[0] != '\0') {
+        name = nameBuf;
+      }
+      std::string lowerName = name;
+      std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                     ::tolower);
+      g_EntityCache[g_Objects[i].ptr] = {name, lowerName,
+                                         GetEntityCategory(lowerName)};
+      pEnt = &g_EntityCache[g_Objects[i].ptr];
+    }
+
+    if (!g_3DESPShowNonItems && pEnt->name.empty())
+      continue;
+
+    if (!g_Categories[pEnt->cat].enabled)
+      continue;
+
+    if (!g_SearchFilterLower.empty()) {
+      if (pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
+        continue;
+    }
+
     int alpha = (int)(255.0f * (1.0f - (dz / 5.0f)));
     if (alpha < 50)
       alpha = 50;
 
-    if (screenX > pos.x && screenX < pos.x + size.x && screenY > pos.y &&
-        screenY < pos.y + size.y) {
-      ImU32 color = (g_Categories[cat].color & 0x00FFFFFF) | (alpha << 24);
-      float radius = 2.0f;
-      drawList->AddCircleFilled(ImVec2(screenX, screenY), radius, color);
-    }
+    ImU32 color = (g_Categories[pEnt->cat].color & 0x00FFFFFF) | (alpha << 24);
+    float radius = 2.0f;
+    drawList->AddCircleFilled(ImVec2(screenX, screenY), radius, color);
   }
 
   ImGui::End();
@@ -650,57 +650,54 @@ void Draw3DESP(IDirect3DDevice9 *device) {
 
     ImVec2 screen;
     float dist = 0.0f;
-    // Skip expensive map lookups and filtering for entities that are off-screen or out of distance range
+    // Skip expensive map lookups and filtering for entities that are off-screen
+    // or out of distance range
     if (!WorldToScreen(obj, screen, &dist, isTracked))
       continue;
 
     char label[300];
-    std::string name;
-    std::string lowerName;
-    EntityCategory cat;
+    const CachedEntity *pEnt = nullptr;
 
     auto it = g_EntityCache.find(g_Objects[i].ptr);
     if (it != g_EntityCache.end()) {
-      name = it->second.name;
-      lowerName = it->second.lowerName;
-      cat = it->second.cat;
+      pEnt = &it->second;
     } else {
       char nameBuf[256];
+      std::string name;
       if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf, 256) &&
           nameBuf[0] != '\0') {
         name = nameBuf;
-      } else {
-        name = "";
       }
-      lowerName = name;
+      std::string lowerName = name;
       std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
                      ::tolower);
-      cat = GetEntityCategory(lowerName);
-      g_EntityCache[g_Objects[i].ptr] = {name, lowerName, cat};
+      g_EntityCache[g_Objects[i].ptr] = {name, lowerName,
+                                         GetEntityCategory(lowerName)};
+      pEnt = &g_EntityCache[g_Objects[i].ptr];
     }
 
-    if (!isTracked && !g_3DESPShowNonItems && name.empty())
+    if (!isTracked && !g_3DESPShowNonItems && pEnt->name.empty())
       continue;
 
     if (!isTracked) {
-      if (!g_Categories[cat].enabled)
+      if (!g_Categories[pEnt->cat].enabled)
         continue;
 
       if (!g_SearchFilterLower.empty()) {
-        if (lowerName.find(g_SearchFilterLower) == std::string::npos)
+        if (pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
           continue;
       }
     }
 
-    if (!name.empty()) {
-      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]", name.c_str(),
-                  dist);
+    if (!pEnt->name.empty()) {
+      _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]",
+                  pEnt->name.c_str(), dist);
     } else if (g_3DESPShowNonItems) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%.0fm", dist);
     }
 
-    ImU32 color =
-        isTracked ? IM_COL32(255, 255, 255, 255) : g_Categories[cat].color;
+    ImU32 color = isTracked ? IM_COL32(255, 255, 255, 255)
+                            : g_Categories[pEnt->cat].color;
     if (isTracked) {
       draw->AddCircle(screen, 8.0f, color, 0, 2.0f);
     }
@@ -879,22 +876,29 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                                     40.0f);
             ImGui::TableHeadersRow();
 
-            // Prepare list for display (filtered)
-            std::vector<int> indices;
+            // Prepare list for display (filtered and pre-calculated for
+            // sorting)
+            struct TableEntry {
+              int index;
+              const CachedEntity *pEnt;
+              float distSq;
+            };
+            static std::vector<TableEntry> entries;
+            entries.clear();
+            entries.reserve(g_ObjectCount);
+
             for (int i = 0; i < g_ObjectCount; i++) {
-              std::string name;
               auto it = g_EntityCache.find(g_Objects[i].ptr);
-              CachedEntity* pCached = nullptr;
+              const CachedEntity *pCached = nullptr;
               if (it != g_EntityCache.end()) {
                 pCached = &it->second;
               } else {
                 char nameBuf[256];
+                std::string name;
                 if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
                                       256) &&
                     nameBuf[0] != '\0') {
                   name = nameBuf;
-                } else {
-                  name = "";
                 }
                 std::string lowerName = name;
                 std::transform(lowerName.begin(), lowerName.end(),
@@ -903,64 +907,49 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                     name, lowerName, GetEntityCategory(lowerName)};
                 pCached = &g_EntityCache[g_Objects[i].ptr];
               }
-              name = pCached->name;
 
-              if (g_HideEmptyNames && name.empty())
+              if (g_HideEmptyNames && pCached->name.empty())
                 continue;
 
-              if (!lowerFilter.empty()) {
-                const std::string &lowerName = pCached->lowerName;
-                if (lowerName.find(lowerFilter) == std::string::npos)
-                  continue;
-              }
-
-              indices.push_back(i);
-            }
-
-            // Always sort if requested
-            if (ImGuiTableSortSpecs *sortSpecs = ImGui::TableGetSortSpecs()) {
-              std::sort(indices.begin(), indices.end(), [&](int a, int b) {
-                const auto &spec = sortSpecs->Specs[0];
-                int res = 0;
-
-                if (spec.ColumnIndex == 0) { // Name
-                  res = g_EntityCache[g_Objects[a].ptr].name.compare(
-                      g_EntityCache[g_Objects[b].ptr].name);
-                } else if (spec.ColumnIndex == 1) { // Cat
-                  res = strcmp(
-                      g_Categories[g_EntityCache[g_Objects[a].ptr].cat].name,
-                      g_Categories[g_EntityCache[g_Objects[b].ptr].cat].name);
-                } else if (spec.ColumnIndex == 2) { // Dist
-                  float dxA = g_Objects[a].x - g_Player.camX;
-                  float dyA = g_Objects[a].y - g_Player.camY;
-                  float dzA = g_Objects[a].z - g_Player.camZ;
-                  float distA = dxA * dxA + dyA * dyA + dzA * dzA;
-
-                  float dxB = g_Objects[b].x - g_Player.camX;
-                  float dyB = g_Objects[b].y - g_Player.camY;
-                  float dzB = g_Objects[b].z - g_Player.camZ;
-                  float distB = dxB * dxB + dyB * dyB + dzB * dzB;
-
-                  if (distA < distB)
-                    res = -1;
-                  else if (distA > distB)
-                    res = 1;
-                }
-
-                if (spec.SortDirection == ImGuiSortDirection_Descending)
-                  return res > 0;
-                return res < 0;
-              });
-            }
-
-            for (int i : indices) {
-              std::string name = g_EntityCache[g_Objects[i].ptr].name;
-              EntityCategory cat = g_EntityCache[g_Objects[i].ptr].cat;
+              if (!lowerFilter.empty() &&
+                  pCached->lowerName.find(lowerFilter) == std::string::npos)
+                continue;
 
               float dx = g_Objects[i].x - g_Player.camX;
               float dy = g_Objects[i].y - g_Player.camY;
               float dz = g_Objects[i].z - g_Player.camZ;
-              float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+              entries.push_back({i, pCached, dx * dx + dy * dy + dz * dz});
+            }
+
+            // Always sort if requested
+            if (ImGuiTableSortSpecs *sortSpecs = ImGui::TableGetSortSpecs()) {
+              const auto &spec = sortSpecs->Specs[0];
+              std::sort(entries.begin(), entries.end(),
+                        [&](const TableEntry &a, const TableEntry &b) {
+                          int res = 0;
+                          if (spec.ColumnIndex == 0) { // Name
+                            res = a.pEnt->name.compare(b.pEnt->name);
+                          } else if (spec.ColumnIndex == 1) { // Cat
+                            res = strcmp(g_Categories[a.pEnt->cat].name,
+                                         g_Categories[b.pEnt->cat].name);
+                          } else if (spec.ColumnIndex == 2) { // Dist
+                            if (a.distSq < b.distSq)
+                              res = -1;
+                            else if (a.distSq > b.distSq)
+                              res = 1;
+                          }
+
+                          if (spec.SortDirection ==
+                              ImGuiSortDirection_Descending)
+                            return res > 0;
+                          return res < 0;
+                        });
+            }
+
+            for (const auto &entry : entries) {
+              int i = entry.index;
+              const CachedEntity *pEnt = entry.pEnt;
+              float dist = sqrtf(entry.distSq);
 
               ImGui::TableNextRow();
               if (dist > g_ESPDistance) {
@@ -969,10 +958,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               }
 
               ImGui::TableSetColumnIndex(0);
-              ImGui::Text("%s", name.empty() ? "(empty)" : name.c_str());
+              ImGui::Text("%s",
+                          pEnt->name.empty() ? "(empty)" : pEnt->name.c_str());
 
               ImGui::TableSetColumnIndex(1);
-              ImGui::Text("%s", g_Categories[cat].name);
+              ImGui::Text("%s", g_Categories[pEnt->cat].name);
 
               ImGui::TableSetColumnIndex(2);
               ImGui::Text("%.0f", dist);
