@@ -72,6 +72,9 @@ bool g_Wallhack = false;
 bool g_Wireframe = false;
 bool g_Fullbright = false;
 bool g_ItemESP = false;
+bool g_RadarForwardUp = false;
+float g_RadarZoom = 2.0f;
+bool g_RadarShowRings = true;
 bool g_3DESP = false;
 bool g_3DESPShowNonItems = false;
 float g_Transparency = 0.5f;
@@ -497,8 +500,7 @@ void DrawRadar() {
 
   ImGui::SetNextWindowSize(ImVec2(200, 200), ImGuiCond_FirstUseEver);
   ImGui::Begin("Item Radar", nullptr,
-               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                   ImGuiWindowFlags_NoScrollbar);
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
 
   ImVec2 pos = ImGui::GetCursorScreenPos();
   ImVec2 size = ImGui::GetWindowSize();
@@ -510,45 +512,78 @@ void DrawRadar() {
   drawList->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y),
                     IM_COL32(255, 255, 255, 255));
 
-  // North Indicator
-  drawList->AddText(ImVec2(center.x - 5, pos.y + 5),
-                    IM_COL32(255, 255, 255, 200), "N");
-
-  // Player Arrow (Cyan)
-  // Angle negation to fix Left/Right inversion
   float angle = -(float)g_Player.camLftRt * (2.0f * 3.14159265f / 65536.0f);
 
-  float forwardX = sinf(angle);
-  float forwardY = -cosf(angle);
+  if (g_RadarShowRings) {
+    for (float rDist = 10.0f; rDist <= 100.0f; rDist += 10.0f) {
+      float radius = rDist * g_RadarZoom;
+      if (radius > size.x * 0.5f && radius > size.y * 0.5f)
+        break;
+      drawList->AddCircle(center, radius, IM_COL32(100, 100, 100, 80), 64);
+    }
+  }
 
-  ImVec2 p1 = ImVec2(center.x + forwardX * 12.0f, center.y + forwardY * 12.0f);
-  ImVec2 p2 = ImVec2(center.x + sinf(angle + 2.5f) * 7.0f,
-                     center.y - cosf(angle + 2.5f) * 7.0f);
-  ImVec2 p3 = ImVec2(center.x + sinf(angle - 2.5f) * 7.0f,
-                     center.y - cosf(angle - 2.5f) * 7.0f);
-  drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(0, 255, 255, 255));
+  if (!g_RadarForwardUp) {
+    drawList->AddText(ImVec2(center.x - 5, pos.y + 5),
+                      IM_COL32(255, 255, 255, 200), "N");
+    float forwardX = sinf(angle);
+    float forwardY = -cosf(angle);
+    ImVec2 p1 =
+        ImVec2(center.x + forwardX * 12.0f, center.y + forwardY * 12.0f);
+    ImVec2 p2 = ImVec2(center.x + sinf(angle + 2.5f) * 7.0f,
+                       center.y - cosf(angle + 2.5f) * 7.0f);
+    ImVec2 p3 = ImVec2(center.x + sinf(angle - 2.5f) * 7.0f,
+                       center.y - cosf(angle - 2.5f) * 7.0f);
+    drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(0, 255, 255, 255));
+  } else {
+    drawList->AddText(ImVec2(center.x - 5, pos.y + 5),
+                      IM_COL32(0, 255, 255, 200), "^");
+    ImVec2 p1 = ImVec2(center.x, center.y - 12.0f);
+    ImVec2 p2 = ImVec2(center.x - 5.0f, center.y - 2.0f);
+    ImVec2 p3 = ImVec2(center.x + 5.0f, center.y - 2.0f);
+    drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(0, 255, 255, 255));
+  }
 
-  float scale = 2.0f;
+  ImVec2 mousePos = ImGui::GetIO().MousePos;
+  bool isMouseClicked = ImGui::IsMouseClicked(0);
+  bool trackedDrawn = false;
+  bool trackedFound = false;
+  ImVec2 trackedRelPos = {0, 0};
 
   for (int i = 0; i < g_ObjectCount; i++) {
+    bool isTracked = (g_Objects[i].id == g_TrackedEntityID);
     float dx = g_Objects[i].x - g_Player.camX;
     float dy = g_Objects[i].y - g_Player.camY;
     float dz = fabsf(g_Objects[i].z - g_Player.camZ);
 
-    // Height filter - skip expensive map lookups for entities on other floors
-    if (dz > 5.0f)
+    if (dz > 5.0f && !isTracked)
       continue;
 
-    // Movement Mapping:
-    // Swapping and inverting signs to align with SS2 world space
-    float screenX = center.x - dy * scale;
-    float screenY = center.y - dx * scale;
+    float relX = -dy;
+    float relY = -dx;
+    if (g_RadarForwardUp) {
+      float cosA = cosf(angle);
+      float sinA = sinf(angle);
+      float nx = relX * cosA + relY * sinA;
+      float ny = -relX * sinA + relY * cosA;
+      relX = nx;
+      relY = ny;
+    }
 
-    // Spatial culling: only process entities that are actually on the radar
-    // screen
+    if (isTracked) {
+      trackedRelPos = ImVec2(relX, relY);
+      trackedFound = true;
+    }
+
+    float screenX = center.x + relX * g_RadarZoom;
+    float screenY = center.y + relY * g_RadarZoom;
+
     if (screenX <= pos.x || screenX >= pos.x + size.x || screenY <= pos.y ||
         screenY >= pos.y + size.y)
       continue;
+
+    if (isTracked)
+      trackedDrawn = true;
 
     const CachedEntity *pEnt = nullptr;
     auto it = g_EntityCache.find(g_Objects[i].ptr);
@@ -569,24 +604,71 @@ void DrawRadar() {
       pEnt = &g_EntityCache[g_Objects[i].ptr];
     }
 
-    if (!g_3DESPShowNonItems && pEnt->name.empty())
-      continue;
-
-    if (!g_Categories[pEnt->cat].enabled)
-      continue;
-
-    if (!g_SearchFilterLower.empty()) {
-      if (pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
+    if (!isTracked) {
+      if (!g_3DESPShowNonItems && pEnt->name.empty())
         continue;
+      if (!g_Categories[pEnt->cat].enabled)
+        continue;
+      if (!g_SearchFilterLower.empty() &&
+          pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
+        continue;
+    }
+
+    if (g_ShowMenu && isMouseClicked) {
+      float dSq = (mousePos.x - screenX) * (mousePos.x - screenX) +
+                  (mousePos.y - screenY) * (mousePos.y - screenY);
+      if (dSq < 64.0f) {
+        g_TrackedEntityID = g_Objects[i].id;
+      }
     }
 
     int alpha = (int)(255.0f * (1.0f - (dz / 5.0f)));
     if (alpha < 50)
       alpha = 50;
+    if (isTracked)
+      alpha = 255;
 
     ImU32 color = (g_Categories[pEnt->cat].color & 0x00FFFFFF) | (alpha << 24);
-    float radius = 2.0f;
-    drawList->AddCircleFilled(ImVec2(screenX, screenY), radius, color);
+    if (isTracked)
+      color = IM_COL32(255, 255, 255, 255);
+
+    if (pEnt->cat == CAT_ENEMY) {
+      drawList->AddTriangleFilled(ImVec2(screenX, screenY - 4),
+                                  ImVec2(screenX - 4, screenY + 3),
+                                  ImVec2(screenX + 4, screenY + 3), color);
+    } else if (pEnt->cat == CAT_WEAPON || pEnt->cat == CAT_AMMO) {
+      drawList->AddRectFilled(ImVec2(screenX - 3, screenY - 3),
+                              ImVec2(screenX + 3, screenY + 3), color);
+    } else {
+      drawList->AddCircleFilled(ImVec2(screenX, screenY), 2.5f, color);
+    }
+
+    if (isTracked) {
+      drawList->AddCircle(ImVec2(screenX, screenY), 6.0f,
+                          IM_COL32(255, 255, 255, 255), 16, 1.0f);
+    }
+  }
+
+  if (g_TrackedEntityID != -1 && trackedFound && !trackedDrawn) {
+    float len = sqrtf(trackedRelPos.x * trackedRelPos.x +
+                      trackedRelPos.y * trackedRelPos.y);
+    if (len > 0.1f) {
+      float dirX = trackedRelPos.x / len;
+      float dirY = trackedRelPos.y / len;
+      float f = 1000.0f;
+      if (fabsf(dirX) > 0.001f)
+        f = fminf(f, fabsf((size.x * 0.5f - 10.0f) / dirX));
+      if (fabsf(dirY) > 0.001f)
+        f = fminf(f, fabsf((size.y * 0.5f - 10.0f) / dirY));
+
+      ImVec2 arrowPos = ImVec2(center.x + dirX * f, center.y + dirY * f);
+      drawList->AddCircleFilled(arrowPos, 3.0f, IM_COL32(255, 255, 255, 255));
+
+      ImVec2 p1 = ImVec2(arrowPos.x + dirX * 8, arrowPos.y + dirY * 8);
+      ImVec2 p2 = ImVec2(arrowPos.x - dirY * 5, arrowPos.y + dirX * 5);
+      ImVec2 p3 = ImVec2(arrowPos.x + dirY * 5, arrowPos.y - dirX * 5);
+      drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(255, 255, 255, 255));
+    }
   }
 
   ImGui::End();
@@ -781,6 +863,20 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           ImGui::SeparatorText("RADAR & ESP");
           ImGui::Checkbox("Item Radar", &g_ItemESP);
           ImGui::SetItemTooltip("Show nearby items on the 2D radar overlay.");
+          if (g_ItemESP) {
+            ImGui::Indent();
+            ImGui::Checkbox("Forward-Up Orientation", &g_RadarForwardUp);
+            ImGui::SetItemTooltip(
+                "Rotate the radar so the top is always where you look.");
+            ImGui::SliderFloat("Radar Zoom", &g_RadarZoom, 1.0f, 10.0f,
+                               "%.1fx");
+            ImGui::SetItemTooltip("Adjust the scale of the radar map.");
+            ImGui::Checkbox("Show Range Rings", &g_RadarShowRings);
+            ImGui::SetItemTooltip(
+                "Draw concentric circles indicating distance.");
+            ImGui::Unindent();
+          }
+
           ImGui::Checkbox("Item ESP", &g_3DESP);
           ImGui::SetItemTooltip(
               "Display item names and distances in 3D world space.");
