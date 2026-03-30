@@ -881,7 +881,8 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           ImGui::SetItemTooltip(
               "Display item names and distances in 3D world space.");
           if (g_3DESP) {
-            ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f);
+            ImGui::SliderFloat("ESP Distance", &g_ESPDistance, 10.0f, 100.0f,
+                               "%.0fm");
             ImGui::SetItemTooltip("Maximum distance to display 3D labels.");
           }
 
@@ -899,6 +900,12 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                              g_SearchFilterLower.begin(), ::tolower);
             }
             ImGui::SetItemTooltip("Filter ESP and Radar by entity name.");
+            ImGui::SameLine();
+            if (ImGui::Button("X##Search")) {
+              g_SearchFilter[0] = '\0';
+              g_SearchFilterLower.clear();
+            }
+            ImGui::SetItemTooltip("Clear search filter");
 
             if (ImGui::TreeNode("Categories")) {
               for (int i = 0; i < CAT_COUNT; i++) {
@@ -943,6 +950,11 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           static char explorerFilter[64] = "";
           ImGui::InputText("Filter##Explorer", explorerFilter, 64);
           ImGui::SetItemTooltip("Filter entities by name.");
+          ImGui::SameLine();
+          if (ImGui::Button("X##Explorer")) {
+            explorerFilter[0] = '\0';
+          }
+          ImGui::SetItemTooltip("Clear filter");
 
           if (g_TrackedEntityID != -1) {
             ImGui::SameLine();
@@ -956,6 +968,54 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           std::string lowerFilter = explorerFilter;
           std::transform(lowerFilter.begin(), lowerFilter.end(),
                          lowerFilter.begin(), ::tolower);
+
+          // Prepare list for display (filtered and pre-calculated for
+          // sorting)
+          struct TableEntry {
+            int index;
+            const CachedEntity *pEnt;
+            float distSq;
+          };
+          static std::vector<TableEntry> entries;
+          entries.clear();
+          entries.reserve(g_ObjectCount);
+
+          for (int i = 0; i < g_ObjectCount; i++) {
+            auto it = g_EntityCache.find(g_Objects[i].ptr);
+            const CachedEntity *pCached = nullptr;
+            if (it != g_EntityCache.end()) {
+              pCached = &it->second;
+            } else {
+              char nameBuf[256];
+              std::string name;
+              if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
+                                    256) &&
+                  nameBuf[0] != '\0') {
+                name = nameBuf;
+              }
+              std::string lowerName = name;
+              std::transform(lowerName.begin(), lowerName.end(),
+                             lowerName.begin(), ::tolower);
+              g_EntityCache[g_Objects[i].ptr] = {name, lowerName,
+                                                 GetEntityCategory(lowerName)};
+              pCached = &g_EntityCache[g_Objects[i].ptr];
+            }
+
+            if (g_HideEmptyNames && pCached->name.empty())
+              continue;
+
+            if (!lowerFilter.empty() &&
+                pCached->lowerName.find(lowerFilter) == std::string::npos)
+              continue;
+
+            float dx = g_Objects[i].x - g_Player.camX;
+            float dy = g_Objects[i].y - g_Player.camY;
+            float dz = g_Objects[i].z - g_Player.camZ;
+            entries.push_back({i, pCached, dx * dx + dy * dy + dz * dz});
+          }
+
+          ImGui::Text("Showing %d / %d entities", (int)entries.size(),
+                      g_ObjectCount);
 
           if (ImGui::BeginTable(
                   "Entities", 4,
@@ -971,51 +1031,6 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                                         ImGuiTableColumnFlags_NoSort,
                                     40.0f);
             ImGui::TableHeadersRow();
-
-            // Prepare list for display (filtered and pre-calculated for
-            // sorting)
-            struct TableEntry {
-              int index;
-              const CachedEntity *pEnt;
-              float distSq;
-            };
-            static std::vector<TableEntry> entries;
-            entries.clear();
-            entries.reserve(g_ObjectCount);
-
-            for (int i = 0; i < g_ObjectCount; i++) {
-              auto it = g_EntityCache.find(g_Objects[i].ptr);
-              const CachedEntity *pCached = nullptr;
-              if (it != g_EntityCache.end()) {
-                pCached = &it->second;
-              } else {
-                char nameBuf[256];
-                std::string name;
-                if (GetStringProperty(g_Objects[i].id, "ObjShort", nameBuf,
-                                      256) &&
-                    nameBuf[0] != '\0') {
-                  name = nameBuf;
-                }
-                std::string lowerName = name;
-                std::transform(lowerName.begin(), lowerName.end(),
-                               lowerName.begin(), ::tolower);
-                g_EntityCache[g_Objects[i].ptr] = {
-                    name, lowerName, GetEntityCategory(lowerName)};
-                pCached = &g_EntityCache[g_Objects[i].ptr];
-              }
-
-              if (g_HideEmptyNames && pCached->name.empty())
-                continue;
-
-              if (!lowerFilter.empty() &&
-                  pCached->lowerName.find(lowerFilter) == std::string::npos)
-                continue;
-
-              float dx = g_Objects[i].x - g_Player.camX;
-              float dy = g_Objects[i].y - g_Player.camY;
-              float dz = g_Objects[i].z - g_Player.camZ;
-              entries.push_back({i, pCached, dx * dx + dy * dy + dz * dz});
-            }
 
             // Always sort if requested
             if (ImGuiTableSortSpecs *sortSpecs = ImGui::TableGetSortSpecs()) {
@@ -1042,6 +1057,12 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
                         });
             }
 
+            if (entries.empty()) {
+              ImGui::TableNextRow();
+              ImGui::TableSetColumnIndex(0);
+              ImGui::TextDisabled("No entities matching filter");
+            }
+
             for (const auto &entry : entries) {
               int i = entry.index;
               const CachedEntity *pEnt = entry.pEnt;
@@ -1051,6 +1072,10 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
               if (dist > g_ESPDistance) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                                        IM_COL32(80, 20, 20, 100));
+              }
+              if (g_Objects[i].id == g_TrackedEntityID) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       IM_COL32(20, 80, 20, 100));
               }
 
               ImGui::TableSetColumnIndex(0);
