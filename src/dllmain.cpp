@@ -428,6 +428,7 @@ void UpdateObjectList() {
                 g_Objects[g_ObjectCount].z = z;
                 g_Objects[g_ObjectCount].ptr = itemPtr;
                 g_Objects[g_ObjectCount].id = i;
+
                 g_ObjectCount++;
                 if (g_ObjectCount >= MAX_OBJECTS)
                   break;
@@ -513,6 +514,8 @@ void DrawRadar() {
                     IM_COL32(255, 255, 255, 255));
 
   float angle = -(float)g_Player.camLftRt * (2.0f * 3.14159265f / 65536.0f);
+  float cosA = cosf(angle);
+  float sinA = sinf(angle);
 
   if (g_RadarShowRings) {
     for (float rDist = 10.0f; rDist <= 100.0f; rDist += 10.0f) {
@@ -562,8 +565,6 @@ void DrawRadar() {
     float relX = -dy;
     float relY = -dx;
     if (g_RadarForwardUp) {
-      float cosA = cosf(angle);
-      float sinA = sinf(angle);
       float nx = relX * cosA + relY * sinA;
       float ny = -relX * sinA + relY * cosA;
       relX = nx;
@@ -728,18 +729,7 @@ void Draw3DESP(IDirect3DDevice9 *device) {
     if (!g_3DESP && !isTracked)
       continue;
 
-    Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
-
-    ImVec2 screen;
-    float dist = 0.0f;
-    // Skip expensive map lookups and filtering for entities that are off-screen
-    // or out of distance range
-    if (!WorldToScreen(obj, screen, &dist, isTracked))
-      continue;
-
-    char label[300];
     const CachedEntity *pEnt = nullptr;
-
     auto it = g_EntityCache.find(g_Objects[i].ptr);
     if (it != g_EntityCache.end()) {
       pEnt = &it->second;
@@ -758,18 +748,25 @@ void Draw3DESP(IDirect3DDevice9 *device) {
       pEnt = &g_EntityCache[g_Objects[i].ptr];
     }
 
-    if (!isTracked && !g_3DESPShowNonItems && pEnt->name.empty())
-      continue;
-
+    // Early culling by metadata filters BEFORE expensive projection
     if (!isTracked) {
+      if (!g_3DESPShowNonItems && pEnt->name.empty())
+        continue;
       if (!g_Categories[pEnt->cat].enabled)
         continue;
-
-      if (!g_SearchFilterLower.empty()) {
-        if (pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
-          continue;
-      }
+      if (!g_SearchFilterLower.empty() &&
+          pEnt->lowerName.find(g_SearchFilterLower) == std::string::npos)
+        continue;
     }
+
+    Vec3 obj = {g_Objects[i].x, g_Objects[i].y, g_Objects[i].z};
+    ImVec2 screen;
+    float dist = 0.0f;
+    // Skip projection for entities that are off-screen or out of distance range
+    if (!WorldToScreen(obj, screen, &dist, isTracked))
+      continue;
+
+    char label[300];
 
     if (!pEnt->name.empty()) {
       _snprintf_s(label, sizeof(label), _TRUNCATE, "%s [%.0fm]",
