@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 #include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
 struct Vec3 {
   float x, y, z;
@@ -33,6 +35,9 @@ SetTextureFn oSetTexture = nullptr;
 
 typedef BOOL(WINAPI *SetCursorPosFn)(int x, int y);
 SetCursorPosFn oSetCursorPos = nullptr;
+
+typedef DWORD(WINAPI *timeGetTimeFn)();
+timeGetTimeFn otimeGetTime = nullptr;
 
 // Global State
 bool g_Initialized = false;
@@ -81,6 +86,7 @@ float g_Transparency = 0.5f;
 float g_ESPDistance = 50.0f;
 char g_SearchFilter[64] = "";
 std::string g_SearchFilterLower = "";
+float g_SpeedHack = 1.0f;
 
 // Cache
 struct CachedEntity {
@@ -273,6 +279,28 @@ BOOL WINAPI Hooked_SetCursorPos(int x, int y) {
   if (g_ShowMenu && g_BlockInput)
     return TRUE;
   return oSetCursorPos(x, y);
+}
+
+DWORD WINAPI Hooked_timeGetTime() {
+  DWORD realTime = otimeGetTime();
+  
+  static DWORD s_LastRealTime = 0;
+  static double s_FakeTime = 0.0;
+  static bool s_Initialized = false;
+
+  if (!s_Initialized) {
+    s_LastRealTime = realTime;
+    s_FakeTime = (double)realTime;
+    s_Initialized = true;
+    return realTime;
+  }
+
+  DWORD delta = realTime - s_LastRealTime;
+  s_LastRealTime = realTime;
+
+  s_FakeTime += (double)delta * g_SpeedHack;
+  
+  return (DWORD)s_FakeTime;
 }
 
 LRESULT __stdcall WndProc(const HWND hWnd, UINT uMsg, WPARAM wParam,
@@ -843,6 +871,9 @@ long __stdcall Hooked_EndScene(IDirect3DDevice9 *device) {
           ImGui::Checkbox("Block Game Input", &g_BlockInput);
           ImGui::SetItemTooltip(
               "Stop keyboard and mouse events from reaching the game.");
+          
+          ImGui::SliderFloat("Speedhack", &g_SpeedHack, 0.1f, 10.0f, "%.2fx");
+          ImGui::SetItemTooltip("Change game speed by hooking timeGetTime.");
 
           ImGui::SeparatorText("VISUALS");
           ImGui::Checkbox("Wallhack", &g_Wallhack);
@@ -1132,6 +1163,16 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
                 reinterpret_cast<void **>(&oSetTexture));
   MH_CreateHook(&SetCursorPos, (LPVOID)Hooked_SetCursorPos,
                 reinterpret_cast<LPVOID *>(&oSetCursorPos));
+
+  HMODULE hWinmm = GetModuleHandleA("winmm.dll");
+  if (!hWinmm) hWinmm = LoadLibraryA("winmm.dll");
+  if (hWinmm) {
+    void* pTimeGetTime = (void*)GetProcAddress(hWinmm, "timeGetTime");
+    if (pTimeGetTime) {
+      MH_CreateHook(pTimeGetTime, (LPVOID)Hooked_timeGetTime,
+                    reinterpret_cast<LPVOID *>(&otimeGetTime));
+    }
+  }
 
   MH_EnableHook(MH_ALL_HOOKS);
 
